@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chord Trainer</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #141c30;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #2f81f7;
+    --hit: #3fb950;
+    --miss: #f0883e;
+    --border: #28344a;
+    --dot: #2f81f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  body { display: flex; flex-direction: column; align-items: center; padding: 20px 14px 36px; gap: 18px; min-height: 100%; }
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  .sub { color: var(--muted); font-size: 13px; text-align: center; max-width: 520px; line-height: 1.5; }
+  a.nav { color: var(--accent); font-size: 13px; text-decoration: none; }
+
+  /* Stage wraps the interface so the start button can float over it */
+  .stage { position: relative; width: 100%; max-width: 480px; }
+  .trainer { display: flex; flex-direction: column; align-items: center; gap: 18px; width: 100%;
+    transition: filter 0.25s, opacity 0.25s; }
+  .stage:not(.armed) .trainer {
+    filter: blur(2px) brightness(0.5); opacity: 0.75; pointer-events: none; user-select: none;
+  }
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 5; }
+  .stage.armed .overlay { display: none; }
+  #start {
+    background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 14px 28px; font-size: 16px; font-weight: 600; cursor: pointer;
+    transition: opacity .15s, transform .15s; box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  }
+  #start:hover { transform: translateY(-1px); }
+  #start:active { opacity: 0.8; }
+
+  .chord-name { font-size: 54px; font-weight: 700; letter-spacing: -1px; line-height: 1; }
+  .chord-name small { font-size: 22px; color: var(--muted); font-weight: 500; }
+
+  .diagram { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+  canvas#chart { display: block; }
+
+  .status {
+    font-size: 16px; font-weight: 600; height: 24px; text-align: center;
+  }
+  .status.ok { color: var(--hit); }
+  .status.listening { color: var(--muted); }
+
+  /* pitch-class readout */
+  .pcs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .pc {
+    width: 38px; padding: 7px 0; border-radius: 8px; text-align: center;
+    font-size: 13px; font-weight: 700; border: 1px solid var(--border);
+    background: var(--panel); color: var(--muted); transition: all .12s;
+  }
+  .pc.target { border-color: var(--accent); color: var(--text); }   /* needed for this chord */
+  .pc.heard { background: #15381f; }                                 /* currently detected */
+  .pc.heard.target { background: var(--hit); color: #06210f; border-color: var(--hit); }
+  .pc.heard.extra { background: #3a2412; border-color: var(--miss); color: #f0b080; } /* heard but not in chord */
+
+  .legend { color: var(--muted); font-size: 12px; text-align: center; max-width: 480px; line-height: 1.6; }
+  .legend b { color: var(--text); }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  button.ctrl { background: transparent; color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 18px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button.ctrl.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.ctrl:disabled { opacity: .4; cursor: default; }
+
+  .progress { color: var(--muted); font-size: 13px; }
+  .hold-meter { width: 220px; height: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .hold-fill { height: 100%; width: 0%; background: var(--hit); transition: width .1s linear; }
+
+  /* progress stats panel */
+  .stats { width: 100%; max-width: 480px; }
+  .stats h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-align: center; margin-bottom: 10px; letter-spacing: .02em; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 6px; text-align: center;
+  }
+  .stat .nm { font-size: 17px; font-weight: 700; }
+  .stat .tag { font-size: 10px; font-weight: 700; margin-top: 3px; text-transform: uppercase; letter-spacing: .03em; }
+  .stat .sub { font-size: 10px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .st-new .tag { color: var(--muted); }
+  .st-needs .tag { color: var(--miss); }
+  .st-learning .tag { color: #f0c330; }
+  .st-mastered { border-color: var(--hit); }
+  .st-mastered .tag { color: var(--hit); }
+  .stats-reset { display:block; margin: 10px auto 0; background: transparent; border: 1px solid var(--border);
+    color: var(--muted); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+
+  footer { color: var(--muted); font-size: 11px; text-align: center; margin-top: auto; }
+  footer a { color: var(--accent); }
+
+  /* shared app nav */
+  .appnav {
+    width: 100%; max-width: 560px; display: flex; gap: 8px;
+    justify-content: center; flex-wrap: wrap; margin-bottom: 2px;
+  }
+  .appnav a {
+    flex: 1 1 auto; min-width: 96px; text-align: center;
+    padding: 9px 12px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    text-decoration: none; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); transition: all .12s; white-space: nowrap;
+  }
+  .appnav a:hover { color: var(--text); }
+  .appnav a.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+  @media (max-width: 420px) { .appnav a { font-size: 12px; min-width: 0; padding: 9px 8px; } }
+
+  /* ===== Shared settings drawer ===== */
+  .gear-btn {
+    height: 42px; min-width: 42px; border-radius: 11px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 15px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    line-height: 1; padding: 0 16px; flex: 0 0 auto;
+  }
+  .ctrl-row { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
+  .practice-pick { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+  .practice-pick select {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; font-size: 14px; accent-color: var(--accent);
+  }
+  .gear-btn:active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .drawer-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 45;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; z-index: 46; background: var(--panel);
+    display: flex; flex-direction: column; gap: 4px; transition: transform .22s ease;
+    top: 0; right: 0; height: 100%; width: 320px; max-width: 86vw;
+    border-left: 1px solid var(--border); padding: 18px;
+    transform: translateX(100%); overflow-y: auto;
+  }
+  .drawer.open { transform: translateX(0); }
+  @media (max-width: 560px) {
+    .drawer {
+      top: auto; right: 0; left: 0; bottom: 0; width: 100%; max-width: 100%; height: auto;
+      max-height: 80vh; border-left: none; border-top: 1px solid var(--border);
+      border-radius: 16px 16px 0 0; transform: translateY(100%);
+    }
+    .drawer.open { transform: translateY(0); }
+  }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .drawer-head h2 { font-size: 16px; font-weight: 700; }
+  .drawer-close { background: transparent; border: none; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+  .drawer .set-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 11px 2px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .drawer .set-row:last-child { border-bottom: none; }
+  .drawer .set-label { font-size: 14px; color: var(--text); font-weight: 600; }
+  .drawer .set-ctl { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <div class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head"><h2>⚙ Settings</h2><button class="drawer-close" id="drawerClose" aria-label="Close">✕</button></div>
+    <div class="set-row">
+      <span class="set-label">String order</span>
+      <span class="set-ctl">
+        <select id="orient">
+          <option value="high-top">High e on top</option>
+          <option value="low-top">Low E on top</option>
+        </select>
+      </span>
+    </div>
+    <div class="set-row">
+      <span class="set-label">Auto-advance when correct</span>
+      <span class="set-ctl"><input type="checkbox" id="autoAdvance" checked style="accent-color:var(--accent)"></span>
+    </div>
+    <div class="set-row" style="flex-direction:column; align-items:stretch">
+      <span class="set-label">Sensitivity</span>
+      <span class="set-ctl" style="margin-top:8px">
+        <input type="range" id="sensitivity" min="0" max="100" value="75" style="accent-color:var(--accent); flex:1">
+        <span id="sensVal" style="min-width:64px;text-align:right">forgiving</span>
+      </span>
+    </div>
+  </div>
+
+  <nav class="appnav">
+    <a href="tuner.html">🎸 Tuner</a>
+    <a href="index.html">🎵 Fret Player</a>
+    <a href="trainer.html" class="active">🎯 Chord Trainer</a>
+  </nav>
+  <h1>🎸 Chord Trainer</h1>
+  <p class="sub">Learn one chord at a time. The diagram shows where to put your fingers; play the chord and the trainer listens. It advances to the next chord once you hold the right one cleanly.</p>
+
+  <div class="ctrl-row" style="margin-bottom:14px">
+    <label class="practice-pick">Practice
+      <select id="routine">
+        <option value="all">All chords</option>
+        <option value="nashdom">Наш дом (song order)</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="overlay"><button id="start">Start — enable mic</button></div>
+    <div class="trainer" id="trainer">
+    <div class="chord-name" id="chordName">C</div>
+
+    <div class="diagram"><canvas id="chart" width="420" height="220"></canvas></div>
+
+    <div class="status listening" id="status">Listening…</div>
+    <div class="hold-meter"><div class="hold-fill" id="holdFill"></div></div>
+
+    <div class="pcs" id="pcs"></div>
+
+    <div class="row">
+      <button class="ctrl" id="prev">‹ Prev</button>
+      <span class="progress" id="progress"></span>
+      <button class="ctrl" id="next">Skip ›</button>
+    </div>
+    <p class="legend">Blue-outlined letters are the notes this chord needs. They turn <b style="color:var(--hit)">green</b> as the mic hears them; an <b style="color:#f0b080">orange</b> letter is a note you're playing that isn't in the chord (a muted string ringing, usually). Get all the chord's notes sounding together and hold for a moment. With auto-advance on, play it cleanly <b>twice</b> (release and re-strum between) to move to the next chord.</p>
+    </div>
+  </div>
+
+  <div class="ctrl-row" style="margin-top:14px">
+    <button class="gear-btn" id="gearBtn" aria-label="Settings" title="Settings">⚙ Settings</button>
+  </div>
+
+  <div class="stats">
+    <h2>Your progress <span style="font-weight:400">— saved on this device only</span></h2>
+    <div class="stat-grid" id="statGrid"></div>
+    <button class="stats-reset" id="statsReset">Reset my progress</button>
+  </div>
+
+  <footer>Runs entirely on your device. No audio leaves your browser. · <a href="index.html">fret player</a></footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Settings drawer open/close (shared pattern across pages) ----------
+  const gearBtn = document.getElementById("gearBtn");
+  const drawer = document.getElementById("drawer");
+  const drawerBackdrop = document.getElementById("drawerBackdrop");
+  const drawerClose = document.getElementById("drawerClose");
+  function openDrawer() { drawer.classList.add("open"); drawerBackdrop.classList.add("open"); drawer.setAttribute("aria-hidden", "false"); }
+  function closeDrawer() { drawer.classList.remove("open"); drawerBackdrop.classList.remove("open"); drawer.setAttribute("aria-hidden", "true"); }
+  gearBtn.addEventListener("click", openDrawer);
+  drawerClose.addEventListener("click", closeDrawer);
+  drawerBackdrop.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+
+  // ---- Orientation (shared across all guitar apps via one localStorage key) ----
+  const ORIENT_KEY = "guitar.orientation";
+  let orient = "high-top";
+  try { orient = localStorage.getItem(ORIENT_KEY) || "high-top"; } catch (e) {}
+
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  // Strings in standard tuning, open MIDI (low E .. high e)
+  const OPEN = { E6: 40, A: 45, D: 50, G: 55, B: 59, e1: 64 };
+
+  // Chord library. frets: low-E, A, D, G, B, high-e  (null = muted).
+  // pcs = required pitch classes (0..11) the detector must hear.
+  const CHORDS = [
+    { name: "C",  quality: "major",  frets: [null,3,2,0,1,0] },
+    { name: "A",  quality: "major",  frets: [null,0,2,2,2,0] },
+    { name: "G",  quality: "major",  frets: [3,2,0,0,0,3] },
+    { name: "E",  quality: "major",  frets: [0,2,2,1,0,0] },
+    { name: "D",  quality: "major",  frets: [null,null,0,2,3,2] },
+    { name: "Am", quality: "minor",  frets: [null,0,2,2,1,0] },
+    { name: "Em", quality: "minor",  frets: [0,2,2,0,0,0] },
+    { name: "Dm", quality: "minor",  frets: [null,null,0,2,3,1] },
+    { name: "F",  quality: "mini (4-string)", frets: [null,null,3,2,1,1] },
+  ];
+  const STRING_OPEN = [OPEN.E6, OPEN.A, OPEN.D, OPEN.G, OPEN.B, OPEN.e1];
+
+  // Compute required pitch classes from the fretted notes
+  CHORDS.forEach(c => {
+    const set = new Set();
+    c.frets.forEach((f, i) => { if (f !== null) set.add((STRING_OPEN[i] + f) % 12); });
+    c.pcs = set;
+  });
+
+  // ---- DOM ---------------------------------------------------------------
+  const startBtn = document.getElementById("start");
+  const trainerEl = document.getElementById("trainer");
+  const chordNameEl = document.getElementById("chordName");
+  const statusEl = document.getElementById("status");
+  const holdFill = document.getElementById("holdFill");
+  const pcsEl = document.getElementById("pcs");
+  const progressEl = document.getElementById("progress");
+  const prevBtn = document.getElementById("prev");
+  const nextBtn = document.getElementById("next");
+  const autoAdvance = document.getElementById("autoAdvance");
+  const routineSel = document.getElementById("routine");
+  const sensInput = document.getElementById("sensitivity");
+  const sensVal = document.getElementById("sensVal");
+  const chart = document.getElementById("chart");
+  const cctx = chart.getContext("2d");
+  const statGrid = document.getElementById("statGrid");
+  const statsReset = document.getElementById("statsReset");
+
+  // Practice routines. "all" walks the whole library in order; a song routine
+  // walks a fixed chord ORDER (by name) so you drill the actual switches, and
+  // loops. Names must exist in CHORDS above.
+  const ROUTINES = {
+    all:      { label: "All chords", order: CHORDS.map(c => c.name) },
+    nashdom:  { label: "Наш дом (Am–Dm–G–C–F–Dm–E–Am)",
+                order: ["Am", "Dm", "G", "C", "F", "Dm", "E", "Am"] },
+  };
+  // Resolve a routine's chord NAMES to CHORDS indices once.
+  Object.values(ROUTINES).forEach(r => {
+    r.seq = r.order.map(n => CHORDS.findIndex(c => c.name === n)).filter(i => i >= 0);
+  });
+  let routineKey = "all";
+  let seqPos = 0;                    // position within the current routine's seq
+
+  let idx = 0;
+  let audioCtx = null, analyser = null, micStream = null, freqBuf = null;
+  let running = false;
+  let holdStart = 0;                 // when the correct chord first became fully present
+  const HOLD_MS = 400;               // accumulated clean-time needed to count one rep
+  const REPS_REQUIRED = 2;           // how many clean holds before auto-advancing
+  let reps = 0;                      // clean holds completed for the current chord
+  let repCounted = false;            // true once the current hold has been counted
+  let advancing = false;             // true during the brief post-advance pause
+
+  // --- Detection smoothing / adaptation state ---
+  const smoothChroma = new Array(12).fill(0); // (A) rolling-average chroma (EMA)
+  const CHROMA_ALPHA = 0.35;         // EMA weight for the newest frame (0..1)
+  let noiseFloor = 1e-4;             // (D) calibrated ambient energy level
+  let calibrating = false, calibUntil = 0, calibSum = 0, calibN = 0;
+  let cleanTime = 0;                 // (B) accumulated clean milliseconds for this rep
+  let lastFrameT = 0;                // for dt between frames
+  let sensitivity = 0.55;            // 0..1 from the slider (higher = easier)
+
+  // --- Progress tracking (per-browser localStorage; nothing leaves device) ---
+  let chordShownAt = 0;              // when the current chord first became playable
+  let firstCorrectLogged = false;    // so we time only the FIRST correct per visit
+  const TR_KEY = "guitar.trainer.v1";
+  function trLoad() { try { return JSON.parse(localStorage.getItem(TR_KEY)) || {}; } catch (e) { return {}; } }
+  function trSave(s) { try { localStorage.setItem(TR_KEY, JSON.stringify(s)); } catch (e) {} }
+  // Record one completed chord: attempts++, and roll the time-to-correct average.
+  function recordChord(name, msToCorrect) {
+    const s = trLoad();
+    const r = s[name] || { completed: 0, avgMs: null };
+    r.completed++;
+    r.avgMs = r.avgMs == null ? msToCorrect : Math.round(r.avgMs * 0.6 + msToCorrect * 0.4);
+    r.last = new Date().toISOString();
+    s[name] = r; trSave(s);
+    renderStats();
+  }
+  // Classify a chord from its stored stats.
+  function chordStatus(r) {
+    if (!r || !r.completed) return { label: "new", cls: "st-new" };
+    if (r.completed >= 3 && r.avgMs != null && r.avgMs < 3500) return { label: "mastered", cls: "st-mastered" };
+    if (r.completed >= 2 && r.avgMs != null && r.avgMs < 6000) return { label: "learning", cls: "st-learning" };
+    return { label: "needs work", cls: "st-needs" };
+  }
+  // Render one tile per chord showing its mastery status + quick stats.
+  function renderStats() {
+    const s = trLoad();
+    statGrid.innerHTML = "";
+    for (const c of CHORDS) {
+      const r = s[c.name];
+      const st = chordStatus(r);
+      const avg = r && r.avgMs != null ? (r.avgMs / 1000).toFixed(1) + "s" : "—";
+      const reps = r ? r.completed : 0;
+      const el = document.createElement("div");
+      el.className = "stat " + st.cls;
+      el.innerHTML = `<div class="nm">${c.name}</div>`
+        + `<div class="tag">${st.label}</div>`
+        + `<div class="sub">${reps}× · ${avg}</div>`;
+      statGrid.appendChild(el);
+    }
+  }
+
+  // Build the 12 pitch-class chips
+  const pcChips = NOTE_NAMES.map((nm, i) => {
+    const d = document.createElement("div");
+    d.className = "pc"; d.textContent = nm; d.dataset.pc = i;
+    pcsEl.appendChild(d);
+    return d;
+  });
+
+  // Current routine's sequence of CHORDS indices.
+  function curSeq() { return ROUTINES[routineKey].seq; }
+  // The chord that will come NEXT in the routine (for the "→ next" hint).
+  function routineNextChord() {
+    const seq = curSeq();
+    if (seq.length < 2) return null;
+    return CHORDS[seq[(seqPos + 1) % seq.length]];
+  }
+  // Move within the routine by delta (+1 next, -1 prev), wrapping, and load it.
+  function advanceSeq(delta) {
+    const seq = curSeq();
+    seqPos = (seqPos + delta + seq.length) % seq.length;
+    loadChord(seq[seqPos]);
+  }
+  // Jump to a routine position (used on routine change / restart).
+  function gotoSeqStart() { seqPos = 0; loadChord(curSeq()[0]); }
+
+  function loadChord(i) {
+    idx = (i + CHORDS.length) % CHORDS.length;
+    const c = CHORDS[idx];
+    const nextC = routineNextChord();   // peek the upcoming chord for a hint
+    chordNameEl.innerHTML = c.name + ` <small>${c.quality}</small>`
+      + (nextC ? ` <small style="opacity:.6">→ ${nextC.name}</small>` : "");
+    reps = 0; repCounted = false;
+    holdStart = 0; cleanTime = 0; holdFill.style.width = "0%";
+    smoothChroma.fill(0);
+    chordShownAt = performance.now(); firstCorrectLogged = false;
+    updateProgress();
+    statusEl.textContent = "Listening…"; statusEl.className = "status listening";
+    // mark target pitch classes
+    pcChips.forEach((chip, pc) => {
+      chip.classList.toggle("target", c.pcs.has(pc));
+      chip.classList.remove("heard", "extra");
+    });
+    drawDiagram(c);
+  }
+
+  function updateProgress() {
+    const base = `${seqPos + 1} / ${curSeq().length}`;
+    progressEl.textContent = autoAdvance.checked
+      ? `${base} · ${reps}/${REPS_REQUIRED} clean`
+      : base;
+  }
+
+  // ---- Chord diagram: HORIZONTAL fretboard, matching the fret player -----
+  // Strings are rows (high e on top, low E on bottom); frets are vertical
+  // lines; the nut is on the left. Open/muted markers sit left of the nut.
+  function drawDiagram(c) {
+    const W = chart.width, H = chart.height;
+    cctx.clearRect(0, 0, W, H);
+    const left = 46, right = W - 20, top = 26, bottom = H - 30;
+    const nStr = 6, nFret = 4;
+    const sy = (bottom - top) / (nStr - 1);   // vertical gap between strings
+    const fx = (right - left) / nFret;         // horizontal gap between frets
+
+    // c.frets is indexed low-E(0)..high-e(5). Display row r maps to a string
+    // index per the orientation setting: high-top puts high e (string 5) on top.
+    const rowString = r => orient === "low-top" ? r : (5 - r);
+    const labels = orient === "low-top"
+      ? ["E", "A", "D", "G", "B", "e"]   // low E on top
+      : ["e", "B", "G", "D", "A", "E"];  // high e on top (default)
+
+    // strings (horizontal rows), thicker toward the bottom (low E)
+    for (let r = 0; r < nStr; r++) {
+      const y = top + r * sy;
+      cctx.strokeStyle = "rgba(200,210,225,0.5)";
+      cctx.lineWidth = 1 + r * 0.4;
+      cctx.beginPath(); cctx.moveTo(left, y); cctx.lineTo(right, y); cctx.stroke();
+      // string label at far left
+      cctx.fillStyle = "rgba(200,210,225,0.65)";
+      cctx.font = "12px -apple-system, sans-serif";
+      cctx.textAlign = "right"; cctx.textBaseline = "middle";
+      cctx.fillText(labels[r], left - 22, y);
+    }
+
+    // frets (vertical lines); fret 0 = thick nut
+    for (let f = 0; f <= nFret; f++) {
+      const x = left + f * fx;
+      cctx.strokeStyle = "rgba(200,210,225,0.55)";
+      cctx.lineWidth = (f === 0) ? 5 : 1;
+      cctx.beginPath(); cctx.moveTo(x, top); cctx.lineTo(x, bottom); cctx.stroke();
+    }
+    cctx.lineWidth = 1;
+
+    // markers
+    cctx.textBaseline = "middle";
+    for (let r = 0; r < nStr; r++) {
+      const s = rowString(r);
+      const f = c.frets[s];
+      const y = top + r * sy;
+      const markX = left - 22; // to the left of the nut for open/muted
+      if (f === null) {
+        // muted: × left of the nut
+        cctx.strokeStyle = "rgba(240,136,62,0.95)"; cctx.lineWidth = 2;
+        const rr = 5;
+        cctx.beginPath();
+        cctx.moveTo(markX - rr, y - rr); cctx.lineTo(markX + rr, y + rr);
+        cctx.moveTo(markX + rr, y - rr); cctx.lineTo(markX - rr, y + rr); cctx.stroke();
+      } else if (f === 0) {
+        // open: hollow circle left of the nut
+        cctx.strokeStyle = "rgba(200,210,225,0.95)"; cctx.lineWidth = 2;
+        cctx.beginPath(); cctx.arc(markX, y, 6, 0, Math.PI * 2); cctx.stroke();
+      } else {
+        // fretted: filled dot centered in that fret space
+        const x = left + (f - 0.5) * fx;
+        cctx.fillStyle = "#2f81f7";
+        cctx.beginPath(); cctx.arc(x, y, 11, 0, Math.PI * 2); cctx.fill();
+        cctx.fillStyle = "#fff";
+        cctx.font = "bold 12px -apple-system, sans-serif";
+        cctx.textAlign = "center";
+        cctx.fillText(String(f), x, y + 0.5);
+      }
+    }
+
+    // fret-number row along the bottom
+    cctx.fillStyle = "rgba(200,210,225,0.4)";
+    cctx.font = "10px -apple-system, sans-serif";
+    cctx.textAlign = "center"; cctx.textBaseline = "top";
+    for (let f = 1; f <= nFret; f++) cctx.fillText(String(f), left + (f - 0.5) * fx, bottom + 8);
+  }
+
+  // ---- Mic + chroma detection --------------------------------------------
+  startBtn.addEventListener("click", start);
+  prevBtn.addEventListener("click", () => advanceSeq(-1));
+  nextBtn.addEventListener("click", () => advanceSeq(1));
+  autoAdvance.addEventListener("change", updateProgress);
+  routineSel.addEventListener("change", () => {
+    routineKey = ROUTINES[routineSel.value] ? routineSel.value : "all";
+    gotoSeqStart();   // jump to the start of the chosen routine
+  });
+  const orientSel = document.getElementById("orient");
+  if (orientSel) {
+    orientSel.value = orient;
+    orientSel.addEventListener("change", () => {
+      orient = orientSel.value;
+      try { localStorage.setItem(ORIENT_KEY, orient); } catch (e) {}
+      drawDiagram(CHORDS[idx]);   // redraw with the new orientation
+    });
+  }
+  sensInput.addEventListener("input", () => {
+    sensitivity = sensInput.value / 100;
+    sensVal.textContent = sensitivity < 0.33 ? "strict"
+      : sensitivity < 0.66 ? "balanced" : "forgiving";
+  });
+  statsReset.addEventListener("click", () => {
+    if (confirm("Clear all your saved chord-trainer progress on this device?")) {
+      trSave({}); renderStats();
+    }
+  });
+
+  async function start() {
+    // Release any lingering stream/context before acquiring a fresh one.
+    if (micStream) { try { micStream.getTracks().forEach(t => t.stop()); } catch (e) {} micStream = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("This browser can't access the microphone here. A secure (https) connection and a browser that supports getUserMedia are required.");
+      return;
+    }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false }
+      });
+    } catch (e) {
+      alert("Microphone access is required for the trainer.\n\n"
+            + "If you previously allowed it, another app or tab may be using the mic — close those and try again.\n\n"
+            + (e && e.message ? e.message : e));
+      return;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(micStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 8192;          // fine frequency resolution for chroma
+    analyser.smoothingTimeConstant = 0.6;
+    freqBuf = new Float32Array(analyser.frequencyBinCount);
+    src.connect(analyser);
+    running = true;
+    document.getElementById("stage").classList.add("armed");
+    // (D) calibrate the ambient noise floor for ~1s before judging
+    calibrating = true; calibUntil = performance.now() + 1000; calibSum = 0; calibN = 0;
+    smoothChroma.fill(0);
+    loadChord(idx);
+    lastFrameT = performance.now();
+    detectLoop();
+  }
+
+  // Map the FFT magnitude spectrum into a 12-bin chroma vector
+  function computeChroma() {
+    analyser.getFloatFrequencyData(freqBuf); // dB values
+    const sr = audioCtx.sampleRate;
+    const n = freqBuf.length;
+    const binHz = sr / analyser.fftSize;
+    const chroma = new Array(12).fill(0);
+    let total = 0;
+    // consider the guitar's useful range ~70 Hz .. 1200 Hz
+    const minBin = Math.max(1, Math.floor(70 / binHz));
+    const maxBin = Math.min(n - 1, Math.ceil(1200 / binHz));
+    for (let b = minBin; b <= maxBin; b++) {
+      const db = freqBuf[b];
+      if (db < -80) continue;
+      const mag = Math.pow(10, db / 20); // dB -> linear amplitude
+      const freq = b * binHz;
+      const midi = 69 + 12 * Math.log2(freq / 440);
+      const pc = ((Math.round(midi) % 12) + 12) % 12;
+      chroma[pc] += mag;
+      total += mag;
+    }
+    if (total > 0) for (let i = 0; i < 12; i++) chroma[i] /= total;
+    return { chroma, total };
+  }
+
+  function detectLoop() {
+    if (!running) return;
+    const now = performance.now();
+    const dt = Math.min(100, now - lastFrameT); // ms since last frame (capped)
+    lastFrameT = now;
+
+    const { chroma, total } = computeChroma();
+    const c = CHORDS[idx];
+
+    // (D) Noise-floor calibration: for the first ~1s, learn the ambient level.
+    if (calibrating) {
+      calibSum += total; calibN++;
+      if (now >= calibUntil) {
+        calibrating = false;
+        noiseFloor = Math.max(1e-4, (calibN ? calibSum / calibN : 1e-4) * 1.6);
+      }
+      statusEl.textContent = "Calibrating… stay quiet a moment";
+      statusEl.className = "status listening";
+      requestAnimationFrame(detectLoop);
+      return;
+    }
+
+    // (A) Rolling-average (EMA) chroma smooths frame-to-frame wobble.
+    for (let i = 0; i < 12; i++) smoothChroma[i] = CHROMA_ALPHA * chroma[i] + (1 - CHROMA_ALPHA) * smoothChroma[i];
+
+    // silence relative to the calibrated floor
+    const silent = total < noiseFloor;
+
+    // (D) Relative "present" threshold: a pitch class counts if it holds a
+    // fair share of the STRONGEST tone this frame, scaled by sensitivity.
+    // sensitivity 0 (strict) -> need ~45% of peak; 1 (forgiving) -> ~15%.
+    let peak = 0; for (let i = 0; i < 12; i++) peak = Math.max(peak, smoothChroma[i]);
+    const presentFrac = 0.45 - 0.30 * sensitivity;   // 0.45 .. 0.15
+    const presentTh = peak * presentFrac;
+    const heard = new Set();
+    if (!silent && peak > 0) for (let pc = 0; pc < 12; pc++) if (smoothChroma[pc] >= presentTh) heard.add(pc);
+
+    // update chips (show what we think is sounding)
+    pcChips.forEach((chip, pc) => {
+      const isTarget = c.pcs.has(pc);
+      const isHeard = heard.has(pc);
+      chip.classList.toggle("heard", isHeard);
+      chip.classList.toggle("extra", isHeard && !isTarget);
+    });
+
+    // (B) Soft match SCORE instead of all-or-nothing.
+    //   targetEnergy = share of smoothed energy that lands on chord tones
+    //   foreignEnergy = share on non-chord tones
+    // A near-correct chord scores high; one weak/missing tone lowers it a little.
+    let targetE = 0, totalE = 0, present = 0;
+    for (let pc = 0; pc < 12; pc++) {
+      totalE += smoothChroma[pc];
+      if (c.pcs.has(pc)) targetE += smoothChroma[pc];
+    }
+    for (const pc of c.pcs) if (heard.has(pc)) present++;
+    const coverage = present / c.pcs.size;             // fraction of chord tones sounding
+    const purity = totalE > 0 ? targetE / totalE : 0;  // fraction of energy that is on-chord
+    const allPresent = coverage >= 1;                  // ALL chord tones must sound
+
+    // (B) Soft purity score, but full coverage is a hard gate: you can't pass a
+    // chord with a missing note, however clean the notes you did play are.
+    // purity pass eases with sensitivity: need 0.80 (strict) .. 0.55 (forgiving).
+    const purityTh = 0.80 - 0.25 * sensitivity;
+    const score = silent ? 0 : purity;                 // reported "cleanliness"
+    const clean = !silent && allPresent && purity >= purityTh;
+
+    // a foreign note is dragging purity down even though all tones are present
+    const foreign = allPresent && purity < purityTh ? 1 : 0;
+
+    // (B) Accumulate clean-time: add when clean, decay (not reset) when not.
+    // This rides over momentary dips so the meter doesn't keep restarting.
+    if (clean) cleanTime = Math.min(HOLD_MS, cleanTime + dt);
+    else cleanTime = Math.max(0, cleanTime - dt * 1.5); // decay faster than it fills
+
+    if (clean || cleanTime > 0) {
+      const held = cleanTime;
+      const frac = Math.min(1, held / HOLD_MS);
+      holdFill.style.width = (frac * 100) + "%";
+
+      // Count this rep once enough clean-time accrued; one rep per hold
+      // (repCounted) so you must release and re-strum for rep #2.
+      if (held >= HOLD_MS && !repCounted) {
+        repCounted = true;
+        reps++;
+        // log time-to-first-correct once per chord appearance
+        if (!firstCorrectLogged) {
+          firstCorrectLogged = true;
+          recordChord(CHORDS[idx].name, Math.round(performance.now() - chordShownAt));
+        }
+        updateProgress();
+        const needMore = autoAdvance.checked && reps < REPS_REQUIRED;
+
+        if (!autoAdvance.checked) {
+          statusEl.textContent = "✓ Correct!"; statusEl.className = "status ok";
+        } else if (needMore) {
+          statusEl.textContent = `✓ Good — ${reps}/${REPS_REQUIRED}, play it once more`;
+          statusEl.className = "status ok";
+        } else {
+          // final rep reached -> advance after a brief beat
+          statusEl.textContent = "✓ Nailed it — next chord…"; statusEl.className = "status ok";
+          advancing = true; running = false; holdFill.style.width = "100%";
+          setTimeout(() => {
+            running = true; advancing = false;
+            advanceSeq(1);
+            lastFrameT = performance.now();
+            detectLoop();
+          }, 650);
+          return; // stop this frame; the timeout restarts the loop
+        }
+      } else if (held >= HOLD_MS && repCounted) {
+        // already counted this hold; keep the meter full and wait for release
+        statusEl.textContent = autoAdvance.checked
+          ? `✓ ${reps}/${REPS_REQUIRED} — release, then play it again`
+          : "✓ Correct!";
+        statusEl.className = "status ok";
+      } else {
+        statusEl.textContent = "Got it — hold…"; statusEl.className = "status ok";
+      }
+    } else {
+      // cleanTime has fully decayed -> chord released; arm the next rep.
+      repCounted = false; holdFill.style.width = "0%";
+      if (allPresent && foreign > 0) {
+        statusEl.textContent = "Close — mute the extra string"; statusEl.className = "status listening";
+      } else if (!silent) {
+        const missing = [...c.pcs].filter(pc => !heard.has(pc)).map(pc => NOTE_NAMES[pc]);
+        statusEl.textContent = missing.length ? "Missing: " + missing.join(", ") : "Listening…";
+        statusEl.className = "status listening";
+      } else {
+        statusEl.textContent = "Listening…"; statusEl.className = "status listening";
+      }
+    }
+
+    requestAnimationFrame(detectLoop);
+  }
+
+  // Fully RELEASE the microphone and reset to the Start state. Mobile browsers
+  // hold the mic for the whole tab otherwise, blocking re-opening and other apps.
+  function stopTrainer() {
+    running = false;
+    if (micStream) { try { micStream.getTracks().forEach(t => t.stop()); } catch (e) {} micStream = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+    analyser = null;
+    document.getElementById("stage").classList.remove("armed");
+    startBtn.textContent = "Start — enable mic";
+  }
+  // Release when the page is hidden/backgrounded; user taps Start again on return.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && micStream) stopTrainer();
+  });
+  window.addEventListener("pagehide", () => { if (micStream) stopTrainer(); });
+
+  // Initialize sensitivity from the slider's default
+  sensitivity = sensInput.value / 100;
+  sensVal.textContent = sensitivity < 0.33 ? "strict" : sensitivity < 0.66 ? "balanced" : "forgiving";
+
+  // Render the first chord immediately so the dimmed preview shows a real
+  // diagram behind the start button (detection stays off until mic is enabled).
+  gotoSeqStart();
+  renderStats();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Guitar Tuner</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a222c;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #2f81f7;
+    --flat: #f0883e;
+    --sharp: #f0883e;
+    --intune: #3fb950;
+    --border: #2d3742;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+    min-height: 100%;
+    gap: 20px;
+  }
+  h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; }
+  .sub { color: var(--muted); font-size: 13px; text-align: center; max-width: 420px; line-height: 1.5; }
+
+  /* Stage wraps the interface so the start button can float over it */
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 440px;
+  }
+  .tuner {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    transition: filter 0.25s, opacity 0.25s;
+  }
+  /* Before the mic is on: dim + blur the preview and block interaction */
+  .stage:not(.armed) .tuner {
+    filter: blur(2px) brightness(0.5);
+    opacity: 0.75;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Overlay holding the start button, centered over the dimmed interface */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+  }
+  .stage.armed .overlay { display: none; }
+  #start {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 14px 28px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.15s;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  }
+  #start:hover { transform: translateY(-1px); }
+  #start:active { opacity: 0.8; }
+
+  .note-display {
+    text-align: center;
+    width: 100%;
+  }
+  .note-name {
+    font-size: 88px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -2px;
+  }
+  .note-name small { font-size: 32px; color: var(--muted); font-weight: 500; }
+  .freq {
+    color: var(--muted);
+    font-size: 15px;
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Needle gauge */
+  .gauge {
+    width: 100%;
+    max-width: 440px;
+    height: 120px;
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .ticks {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 10px 50px 0;
+  }
+  .tick {
+    width: 2px;
+    height: 14px;
+    background: var(--border);
+  }
+  .tick.center { height: 24px; background: var(--muted); width: 2px; }
+  .needle {
+    position: absolute;
+    left: 50%;
+    top: 12px;
+    bottom: 34px;
+    width: 4px;
+    margin-left: -2px;
+    background: var(--accent);
+    border-radius: 2px;
+    transform-origin: bottom center;
+    transition: transform 0.08s linear, background 0.15s;
+  }
+  .gauge-label {
+    position: absolute;
+    bottom: 8px;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 20px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .cents {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+
+  .status {
+    font-size: 15px;
+    font-weight: 600;
+    height: 22px;
+  }
+  .status.flat { color: var(--flat); }
+  .status.sharp { color: var(--sharp); }
+  .status.intune { color: var(--intune); }
+
+  /* String targets */
+  .strings {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+  }
+  /* Fretboard -- horizontal neck: nut on the left, strings stacked top->bottom */
+  .fretboard {
+    position: relative;
+    width: 100%;
+    max-width: 440px;
+    height: 240px;
+    background: linear-gradient(180deg, #3a2a1c 0%, #4a3523 50%, #3a2a1c 100%);
+    border: 2px solid #2a1d12;
+    border-radius: 8px 10px 10px 8px;
+    padding: 26px 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    box-shadow: inset 0 0 24px rgba(0,0,0,0.5);
+  }
+  /* Nut on the left edge */
+  .fretboard::before {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    width: 7px;
+    background: #e8e0d0;
+    border-radius: 6px 0 0 6px;
+  }
+  /* Fret lines (vertical) */
+  .fret-line {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 3px;
+    background: linear-gradient(180deg, #6b6b6b, #cfcfcf, #6b6b6b);
+    box-shadow: 1px 0 2px rgba(0,0,0,0.4);
+  }
+  /* Each string row */
+  .string-btn {
+    position: relative;
+    height: 38px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 22px;
+    cursor: pointer;
+    z-index: 2;
+  }
+  /* The horizontal string wire */
+  .string-btn .wire {
+    position: absolute;
+    left: 7px;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #d8d8d8, #9a9a9a);
+    transition: all 0.15s;
+  }
+  /* Marker dot where the note name sits */
+  .string-btn .dot {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    transition: all 0.15s;
+    position: relative;
+    z-index: 2;
+    flex: none;
+  }
+  .string-btn .hz { font-size: 10px; color: var(--muted); margin-left: 8px; z-index: 2; }
+  /* wire thickness is set inline per-string (see WIRE_PX in JS) so it stays
+     correct regardless of the orientation setting */
+  .string-btn.target .dot {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent), 0 0 14px var(--accent);
+    transform: scale(1.12);
+  }
+  .string-btn.target .wire { background: var(--accent); }
+  .string-btn.near .dot {
+    background: #14321c;
+    border-color: var(--intune);
+    box-shadow: 0 0 0 3px var(--intune), 0 0 16px var(--intune);
+    color: var(--intune);
+  }
+  .string-btn.near .wire { background: var(--intune); }
+
+  .hint { color: var(--muted); font-size: 12px; text-align: center; }
+  .hint b { color: var(--text); }
+
+  .controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .stop-btn {
+    background: transparent;
+    color: var(--flat);
+    border: 1px solid var(--flat);
+    border-radius: 10px;
+    padding: 11px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .stop-btn:hover { background: var(--flat); color: #fff; }
+  .stop-btn:active { opacity: 0.8; }
+  .timeout {
+    color: var(--muted);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .timeout select {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 5px 8px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .countdown {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    min-width: 42px;
+  }
+
+  footer { color: var(--muted); font-size: 11px; text-align: center; margin-top: auto; }
+  footer a { color: var(--accent); }
+
+  /* shared app nav */
+  .appnav {
+    width: 100%; max-width: 560px; display: flex; gap: 8px;
+    justify-content: center; flex-wrap: wrap; margin-bottom: 2px;
+  }
+  .appnav a {
+    flex: 1 1 auto; min-width: 96px; text-align: center;
+    padding: 9px 12px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    text-decoration: none; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); transition: all .12s; white-space: nowrap;
+  }
+  .appnav a:hover { color: var(--text); }
+  .appnav a.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+  @media (max-width: 420px) { .appnav a { font-size: 12px; min-width: 0; padding: 9px 8px; } }
+
+  /* ===== Shared settings drawer ===== */
+  .gear-btn {
+    width: 42px; height: 42px; border-radius: 11px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 20px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+    flex: 0 0 auto;
+  }
+  .ctrl-row { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
+  .gear-btn:active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .drawer-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 45;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; z-index: 46; background: var(--panel);
+    display: flex; flex-direction: column; gap: 4px; transition: transform .22s ease;
+    top: 0; right: 0; height: 100%; width: 320px; max-width: 86vw;
+    border-left: 1px solid var(--border); padding: 18px;
+    transform: translateX(100%); overflow-y: auto;
+  }
+  .drawer.open { transform: translateX(0); }
+  @media (max-width: 560px) {
+    .drawer {
+      top: auto; right: 0; left: 0; bottom: 0; width: 100%; max-width: 100%; height: auto;
+      max-height: 80vh; border-left: none; border-top: 1px solid var(--border);
+      border-radius: 16px 16px 0 0; transform: translateY(100%);
+    }
+    .drawer.open { transform: translateY(0); }
+  }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .drawer-head h2 { font-size: 16px; font-weight: 700; }
+  .drawer-close { background: transparent; border: none; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+  .drawer .set-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 11px 2px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .drawer .set-row:last-child { border-bottom: none; }
+  .drawer .set-label { font-size: 14px; color: var(--text); font-weight: 600; }
+  .drawer .set-ctl { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <div class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head"><h2>⚙ Settings</h2><button class="drawer-close" id="drawerClose" aria-label="Close">✕</button></div>
+    <div class="set-row">
+      <span class="set-label">String order</span>
+      <span class="set-ctl">
+        <select id="orient">
+          <option value="high-top">High e on top</option>
+          <option value="low-top">Low E on top</option>
+        </select>
+      </span>
+    </div>
+    <div class="set-row">
+      <span class="set-label">Auto-off mic after</span>
+      <span class="set-ctl">
+        <select id="timeout">
+          <option value="30">30s</option>
+          <option value="60" selected>60s</option>
+          <option value="120">2 min</option>
+          <option value="300">5 min</option>
+          <option value="0">never</option>
+        </select>
+      </span>
+    </div>
+  </div>
+
+  <nav class="appnav">
+    <a href="tuner.html" class="active">🎸 Tuner</a>
+    <a href="index.html">🎵 Fret Player</a>
+    <a href="trainer.html">🎯 Chord Trainer</a>
+  </nav>
+  <h1>🎸 Guitar Tuner</h1>
+  <p class="sub">Standard tuning (EADGBE). Tap start, allow microphone access, then play a string. The app detects the closest note and shows whether you're flat or sharp.</p>
+
+  <div class="ctrl-row" style="margin-bottom:14px">
+    <button class="gear-btn" id="gearBtn" aria-label="Settings" title="Settings">⚙</button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="overlay"><button id="start">Start tuning</button></div>
+    <div class="tuner" id="tuner">
+    <div class="note-display">
+      <div class="note-name" id="noteName">--</div>
+      <div class="freq" id="freq">Listening…</div>
+    </div>
+
+    <div class="gauge">
+      <div class="ticks" id="ticks"></div>
+      <div class="needle" id="needle"></div>
+      <div class="gauge-label"><span>♭ flat</span><span>sharp ♯</span></div>
+      <div class="cents" id="cents">0 cents</div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="strings fretboard" id="strings"></div>
+
+    <p class="hint">Play one string at a time. Turn the tuning peg until the needle sits at <b>center</b> and the string turns <b>green</b>.</p>
+
+    <div class="controls">
+      <button id="stop" class="stop-btn">⏹ Stop tuning</button>
+      <span id="countdown" class="countdown"></span>
+    </div>
+    </div>
+  </div>
+
+  <footer>Runs entirely on your device. No audio leaves your browser.</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Settings drawer open/close (shared pattern across pages) ----------
+  const gearBtn = document.getElementById("gearBtn");
+  const drawer = document.getElementById("drawer");
+  const drawerBackdrop = document.getElementById("drawerBackdrop");
+  const drawerClose = document.getElementById("drawerClose");
+  function openDrawer() { drawer.classList.add("open"); drawerBackdrop.classList.add("open"); drawer.setAttribute("aria-hidden", "false"); }
+  function closeDrawer() { drawer.classList.remove("open"); drawerBackdrop.classList.remove("open"); drawer.setAttribute("aria-hidden", "true"); }
+  gearBtn.addEventListener("click", openDrawer);
+  drawerClose.addEventListener("click", closeDrawer);
+  drawerBackdrop.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+
+  // Standard 6-string guitar (scientific pitch, A4 = 440 Hz).
+  // Canonical order here is low->high (E2..E4). The DISPLAY order is chosen by
+  // the orientation setting; default "high-e-top" matches the player + trainer.
+  const STRINGS = [
+    { name: "E", octave: 2, label: "E2", freq: 82.41 },  // 6th (thickest)
+    { name: "A", octave: 2, label: "A2", freq: 110.00 }, // 5th
+    { name: "D", octave: 3, label: "D3", freq: 146.83 }, // 4th
+    { name: "G", octave: 3, label: "G3", freq: 196.00 }, // 3rd
+    { name: "B", octave: 3, label: "B3", freq: 246.94 }, // 2nd
+    { name: "E", octave: 4, label: "E4", freq: 329.63 }, // 1st (thinnest)
+  ];
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const A4 = 440;
+
+  const startBtn = document.getElementById("start");
+  const tunerEl = document.getElementById("tuner");
+  const stageEl = document.getElementById("stage");
+  const noteNameEl = document.getElementById("noteName");
+  const freqEl = document.getElementById("freq");
+  const needleEl = document.getElementById("needle");
+  const centsEl = document.getElementById("cents");
+  const statusEl = document.getElementById("status");
+  const stringsEl = document.getElementById("strings");
+  const ticksEl = document.getElementById("ticks");
+  const stopBtn = document.getElementById("stop");
+  const timeoutSel = document.getElementById("timeout");
+  const countdownEl = document.getElementById("countdown");
+
+  // Build tick marks
+  for (let i = 0; i < 11; i++) {
+    const t = document.createElement("div");
+    t.className = "tick" + (i === 5 ? " center" : "");
+    ticksEl.appendChild(t);
+  }
+
+  // Build the fretboard: nut (CSS), two fret lines, and six string columns
+  const fretLine1 = document.createElement("div");
+  fretLine1.className = "fret-line";
+  fretLine1.style.left = "160px";
+  const fretLine2 = document.createElement("div");
+  fretLine2.className = "fret-line";
+  fretLine2.style.left = "300px";
+  stringsEl.appendChild(fretLine1);
+  stringsEl.appendChild(fretLine2);
+
+  // Build string rows in canonical STRINGS order (E2..E4) so stringBtns[i]
+  // always maps to STRINGS[i]. Visual top/bottom order is set by a CSS class
+  // on the container (orientation setting), and wire thickness is inline so it
+  // stays correct whichever way we flip. Thickest = low E2, thinnest = high E4.
+  const WIRE_PX = [4, 3.5, 3, 2.5, 2, 1.5]; // index matches STRINGS (E2..E4)
+  const stringBtns = STRINGS.map((s, i) => {
+    const b = document.createElement("div");
+    b.className = "string-btn";
+    b.innerHTML = `<div class="wire" style="height:${WIRE_PX[i]}px"></div><div class="dot">${s.name}</div><div class="hz">${s.label}</div>`;
+    stringsEl.appendChild(b);
+    return b;
+  });
+
+  // ---- Orientation setting -----------------------------------------------
+  // "high-top" = high e on top (matches Fret Player + Trainer); default.
+  // "low-top"  = low E on top (the tuner's original look).
+  const ORIENT_KEY = "guitar.orientation";
+  const orientSel = document.getElementById("orient");
+  function applyOrientation(mode) {
+    // container is a flex column; column-reverse puts the LAST child (E4, high e) on top
+    stringsEl.style.flexDirection = (mode === "high-top") ? "column-reverse" : "column";
+    try { localStorage.setItem(ORIENT_KEY, mode); } catch (e) {}
+    if (orientSel) orientSel.value = mode;
+  }
+  let savedOrient = "high-top";
+  try { savedOrient = localStorage.getItem(ORIENT_KEY) || "high-top"; } catch (e) {}
+  applyOrientation(savedOrient);
+  if (orientSel) orientSel.addEventListener("change", () => applyOrientation(orientSel.value));
+
+  let audioCtx, analyser, mediaStream, rafId;
+  const BUF_SIZE = 2048;
+  let buf;
+
+  // Auto-off timer state
+  let deadline = 0;          // epoch ms when the mic auto-stops (0 = never)
+  let countdownId = null;
+
+  startBtn.addEventListener("click", init);
+  stopBtn.addEventListener("click", () => stop("You stopped tuning."));
+  timeoutSel.addEventListener("change", resetDeadline);
+
+  async function init() {
+    // Release any lingering stream/context before acquiring a fresh one.
+    if (mediaStream) { try { mediaStream.getTracks().forEach(t => t.stop()); } catch (e) {} mediaStream = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("This browser can't access the microphone here. A secure (https) connection and a browser that supports getUserMedia are required.");
+      return;
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          autoGainControl: false,
+          noiseSuppression: false,
+        }
+      });
+    } catch (err) {
+      alert("Microphone access is required to tune.\n\n"
+            + "If you previously allowed it, another app or tab may be using the mic — close those and try again.\n\n"
+            + (err && err.message ? err.message : err));
+      return;
+    }
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const source = audioCtx.createMediaStreamSource(mediaStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = BUF_SIZE;
+    buf = new Float32Array(analyser.fftSize);
+    source.connect(analyser);
+
+    stageEl.classList.add("armed");
+    resetDeadline();
+    countdownId = setInterval(tickCountdown, 250);
+    update();
+  }
+
+  // (Re)start the auto-off countdown from the selected duration
+  function resetDeadline() {
+    const secs = parseInt(timeoutSel.value, 10);
+    deadline = secs > 0 ? Date.now() + secs * 1000 : 0;
+    tickCountdown();
+  }
+
+  function tickCountdown() {
+    if (!deadline) { countdownEl.textContent = ""; return; }
+    const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    const m = Math.floor(left / 60), s = left % 60;
+    countdownEl.textContent = m > 0 ? `${m}:${String(s).padStart(2, "0")}` : `${s}s`;
+    if (left <= 0) stop("Mic turned off automatically.");
+  }
+
+  // Release the microphone and tear down the audio graph
+  function stop(reason) {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    if (countdownId) { clearInterval(countdownId); countdownId = null; }
+    if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+    if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+    analyser = null;
+    deadline = 0;
+    stageEl.classList.remove("armed");
+    startBtn.textContent = "Start tuning";
+    freqEl.textContent = reason || "";
+  }
+
+  function update() {
+    analyser.getFloatTimeDomainData(buf);
+    const freq = autoCorrelate(buf, audioCtx.sampleRate);
+
+    if (freq > 0) {
+      // Active signal detected — push the auto-off deadline back so it
+      // never cuts out while you're mid-tune
+      resetDeadline();
+      render(freq);
+    } else {
+      noteNameEl.innerHTML = "--";
+      freqEl.textContent = "Listening…";
+      statusEl.textContent = "";
+      statusEl.className = "status";
+      setNeedle(0, "var(--muted)");
+      centsEl.textContent = "";
+      stringBtns.forEach(b => b.classList.remove("target", "near"));
+    }
+    rafId = requestAnimationFrame(update);
+  }
+
+  function render(freq) {
+    // Nearest MIDI note + cents offset
+    const midi = 69 + 12 * Math.log2(freq / A4);
+    const midiRound = Math.round(midi);
+    const cents = Math.round((midi - midiRound) * 100);
+    const noteName = NOTE_NAMES[((midiRound % 12) + 12) % 12];
+    const octave = Math.floor(midiRound / 12) - 1;
+
+    noteNameEl.innerHTML = noteName.replace("#", "<small>♯</small>") + `<small>${octave}</small>`;
+    freqEl.textContent = freq.toFixed(1) + " Hz";
+
+    // Needle: map ±50 cents to ±45deg
+    const deg = Math.max(-45, Math.min(45, (cents / 50) * 45));
+    let color = "var(--accent)";
+    let statusText = "", statusClass = "status";
+    if (Math.abs(cents) <= 5) {
+      color = "var(--intune)";
+      statusText = "In tune ✓";
+      statusClass = "status intune";
+    } else if (cents < 0) {
+      color = "var(--flat)";
+      statusText = "Too low — tighten the string";
+      statusClass = "status flat";
+    } else {
+      color = "var(--sharp)";
+      statusText = "Too high — loosen the string";
+      statusClass = "status sharp";
+    }
+    setNeedle(deg, color);
+    centsEl.textContent = (cents > 0 ? "+" : "") + cents + " cents";
+    statusEl.textContent = statusText;
+    statusEl.className = statusClass;
+
+    // Highlight the closest standard string
+    let closest = 0, best = Infinity;
+    STRINGS.forEach((s, i) => {
+      const d = Math.abs(1200 * Math.log2(freq / s.freq)); // cents distance
+      if (d < best) { best = d; closest = i; }
+    });
+    stringBtns.forEach((b, i) => {
+      b.classList.toggle("target", i === closest);
+      b.classList.toggle("near", i === closest && Math.abs(cents) <= 5 && best < 60);
+    });
+  }
+
+  function setNeedle(deg, color) {
+    needleEl.style.transform = `rotate(${deg}deg)`;
+    needleEl.style.background = color;
+  }
+
+  // Autocorrelation pitch detection (ACF2+ method, robust for low guitar notes)
+  function autoCorrelate(buf, sampleRate) {
+    const SIZE = buf.length;
+    let rms = 0;
+    for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+    rms = Math.sqrt(rms / SIZE);
+    if (rms < 0.01) return -1; // too quiet
+
+    let r1 = 0, r2 = SIZE - 1;
+    const thres = 0.2;
+    for (let i = 0; i < SIZE / 2; i++) {
+      if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+    }
+    for (let i = 1; i < SIZE / 2; i++) {
+      if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+    }
+
+    const trimmed = buf.slice(r1, r2);
+    const n = trimmed.length;
+    const c = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n - i; j++) {
+        c[i] += trimmed[j] * trimmed[j + i];
+      }
+    }
+
+    let d = 0;
+    while (d < n - 1 && c[d] > c[d + 1]) d++;
+    let maxval = -1, maxpos = -1;
+    for (let i = d; i < n; i++) {
+      if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+    }
+    let T0 = maxpos;
+    if (T0 <= 0) return -1;
+
+    // Parabolic interpolation for sub-sample accuracy
+    const x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+    const a = (x1 + x3 - 2 * x2) / 2;
+    const b = (x3 - x1) / 2;
+    if (a) T0 = T0 - b / (2 * a);
+
+    const freq = sampleRate / T0;
+    if (freq < 60 || freq > 1200) return -1; // outside guitar range
+    return freq;
+  }
+
+  // Fully RELEASE the microphone when the page is hidden or backgrounded, not
+  // just suspend the audio graph. Suspending leaves the mic track live, so the
+  // tab keeps holding the OS mic — blocking re-opening and other apps on mobile.
+  // On return the user taps Start again (fresh getUserMedia).
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && mediaStream) stop("Mic released — tap Start to tune again.");
+  });
+  window.addEventListener("pagehide", () => { if (mediaStream) stop(); });
+})();
+</script>
+</body>
+</html>

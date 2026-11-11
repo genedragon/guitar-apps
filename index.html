@@ -1,0 +1,1430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fret Player</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #141c30;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #2f81f7;
+    --hit: #3fb950;
+    --miss: #f0883e;
+    --border: #28344a;
+    --bubble1: #f0a830;  /* notes */
+    --bubble2: #b14cff;  /* notes alt */
+    --bubble3: #2f9bf7;  /* notes alt */
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  body { display: flex; flex-direction: column; align-items: center; padding: 20px 14px 36px; gap: 16px; min-height: 100%; }
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+  .sub { color: var(--muted); font-size: 13px; text-align: center; max-width: 520px; line-height: 1.5; }
+
+  .stage-wrap { width: 100%; max-width: 920px; position: relative; }
+  /* Start overlay: shown on first arrival so the user knowingly turns on the mic */
+  .start-overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(8,12,20,0.72); backdrop-filter: blur(3px);
+    border-radius: 12px; padding: 16px;
+  }
+  .start-overlay[hidden] { display: none; }
+  .start-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 22px 20px; max-width: 420px; width: 100%; text-align: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  .start-card h2 { font-size: 19px; font-weight: 700; margin-bottom: 8px; }
+  .start-card p { color: var(--muted); font-size: 13.5px; line-height: 1.5; margin-bottom: 16px; }
+  .start-card .start-note {
+    font-size: 12.5px; color: var(--muted); margin-top: 14px; margin-bottom: 0;
+    border-top: 1px solid var(--border); padding-top: 12px;
+  }
+  .start-btns { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+  #startMic {
+    background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 13px 22px; font-size: 15px; font-weight: 600; cursor: pointer;
+    transition: opacity .15s, transform .15s;
+  }
+  #startMic:hover { transform: translateY(-1px); }
+  #startMic:active { opacity: .8; }
+  #startFollow {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+    border-radius: 10px; padding: 11px 18px; font-size: 14px; cursor: pointer;
+  }
+  .chord-banner {
+    height: 30px; display: flex; align-items: center; gap: 10px;
+    font-size: 22px; font-weight: 700; letter-spacing: -0.5px; padding-left: 4px;
+  }
+  .chord-banner small { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+  canvas#stage {
+    width: 100%; height: 300px; display: block;
+    background: linear-gradient(180deg, #0e1526 0%, #0b1020 100%);
+    border: 1px solid var(--border); border-radius: 12px;
+  }
+
+  .transport { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; }
+  button.ctrl {
+    background: var(--accent); color: #fff; border: none; border-radius: 10px;
+    padding: 11px 20px; font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity .15s;
+  }
+  button.ctrl.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.ctrl:active { opacity: .8; }
+  button.ctrl:disabled { opacity: .4; cursor: default; }
+
+  .opt { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+  .opt select, .opt input[type=range] { accent-color: var(--accent); }
+  .opt select { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; font-size: 13px; }
+
+  .mic-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); transition: background .2s; }
+  .mic-dot.on { background: var(--hit); box-shadow: 0 0 8px var(--hit); }
+
+  .scorebar { display: flex; gap: 22px; font-size: 14px; }
+  .scorebar b { font-variant-numeric: tabular-nums; }
+  .scorebar .hit { color: var(--hit); }
+  .scorebar .miss { color: var(--miss); }
+
+  .legend { color: var(--muted); font-size: 12px; text-align: center; max-width: 560px; line-height: 1.6; }
+  .legend b { color: var(--text); }
+  footer { color: var(--muted); font-size: 11px; text-align: center; margin-top: auto; }
+  footer a { color: var(--accent); }
+
+  /* audio-sync stepper + tap button */
+  .step {
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 18px; font-weight: 700;
+    cursor: pointer; line-height: 1; padding: 0;
+  }
+  .step:active { background: var(--accent); border-color: var(--accent); }
+  #syncVal { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; }
+  .ctrl.tap { padding: 7px 12px; font-size: 13px; }
+  #speedVal { padding: 4px 9px; font-size: 13px; min-width: 48px; }
+
+  /* calibration modal */
+  .cal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px;
+  }
+  .cal-backdrop[hidden] { display: none; }
+  .cal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    padding: 22px; max-width: 380px; width: 100%; text-align: center;
+  }
+  .cal h2 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  .cal-help { color: var(--muted); font-size: 13px; line-height: 1.55; margin-bottom: 16px; }
+  .cal-help b { color: var(--text); }
+  .cal-count { font-size: 14px; color: var(--muted); height: 20px; margin-bottom: 10px; }
+  .cal-tap {
+    width: 100%; height: 120px; border-radius: 14px; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 30px; font-weight: 800; letter-spacing: 2px;
+    transition: transform .05s, background .1s; user-select: none; -webkit-user-select: none;
+  }
+  .cal-tap:active { transform: scale(0.97); background: #1f6fe0; }
+  .cal-tap.flash { background: var(--hit); }
+  .cal-reading { font-size: 15px; font-weight: 600; margin: 14px 0; min-height: 22px; font-variant-numeric: tabular-nums; }
+  .cal-actions { display: flex; gap: 10px; justify-content: center; }
+
+  /* shared app nav */
+  .appnav {
+    width: 100%; max-width: 560px; display: flex; gap: 8px;
+    justify-content: center; flex-wrap: wrap; margin-bottom: 2px;
+  }
+  .appnav a {
+    flex: 1 1 auto; min-width: 96px; text-align: center;
+    padding: 9px 12px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    text-decoration: none; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); transition: all .12s; white-space: nowrap;
+  }
+  .appnav a:hover { color: var(--text); }
+  .appnav a.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+  @media (max-width: 420px) { .appnav a { font-size: 12px; min-width: 0; padding: 9px 8px; } }
+
+  /* ===== Shared settings drawer ===== */
+  .gear-btn {
+    width: 42px; height: 42px; border-radius: 11px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 20px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+    flex: 0 0 auto;
+  }
+  .gear-btn:active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .drawer-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 45;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; z-index: 46; background: var(--panel);
+    display: flex; flex-direction: column; gap: 4px;
+    transition: transform .22s ease;
+    top: 0; right: 0; height: 100%; width: 320px; max-width: 86vw;
+    border-left: 1px solid var(--border); padding: 18px;
+    transform: translateX(100%); overflow-y: auto;
+  }
+  .drawer.open { transform: translateX(0); }
+  @media (max-width: 560px) {
+    .drawer {
+      top: auto; right: 0; left: 0; bottom: 0; width: 100%; max-width: 100%; height: auto;
+      max-height: 80vh; border-left: none; border-top: 1px solid var(--border);
+      border-radius: 16px 16px 0 0; transform: translateY(100%);
+    }
+    .drawer.open { transform: translateY(0); }
+  }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .drawer-head h2 { font-size: 16px; font-weight: 700; }
+  .drawer-close { background: transparent; border: none; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+  .drawer .set-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 11px 2px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+  }
+  .drawer .set-row:last-child { border-bottom: none; }
+  .drawer .set-label { font-size: 14px; color: var(--text); font-weight: 600; }
+  .drawer .set-ctl { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+
+  <nav class="appnav">
+    <a href="tuner.html">🎸 Tuner</a>
+    <a href="index.html" class="active">🎵 Fret Player</a>
+    <a href="trainer.html">🎯 Chord Trainer</a>
+  </nav>
+  <h1>🎸 Fret Player</h1>
+  <p class="sub">A scrolling fretboard that shows you where to play. Fret-number bubbles flow right-to-left toward the <b style="color:var(--text)">hit line</b>; play each note as it arrives. Turn on the mic to score your hits live.</p>
+
+  <div class="stage-wrap">
+    <div class="chord-banner" id="chordBanner"></div>
+    <canvas id="stage" width="920" height="300"></canvas>
+    <div class="start-overlay" id="startOverlay">
+      <div class="start-card">
+        <h2>🎤 Turn on the mic to score your playing</h2>
+        <p>The Fret Player can listen through your microphone and light each note <b style="color:var(--hit)">green</b> as you play it. You can also just follow along without the mic.</p>
+        <div class="start-btns">
+          <button id="startMic">🎤 Start with mic scoring</button>
+          <button id="startFollow">Just follow along (no mic)</button>
+        </div>
+        <p class="start-note">Using <b>Bluetooth</b> headphones or earbuds? Open <b>⚙ Settings</b> to line up the backing audio (<b>Audio sync</b>) and your scoring (<b>Mic sync</b>) — otherwise playback and hit detection can feel a beat off.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <button class="ctrl" id="play">▶ Play</button>
+    <button class="ctrl secondary" id="restart">⟲ Restart</button>
+    <button class="ctrl secondary" id="mic">🎤 Enable mic scoring</button>
+    <span class="opt"><span class="mic-dot" id="micDot"></span></span>
+    <span class="opt">Track
+      <select id="track">
+        <option value="scale">C-major scale (demo)</option>
+        <option value="riff">Seven Nation Army (riff)</option>
+        <option value="chords">Chord training: C–Am–F–G</option>
+        <option value="nashdom1">Наш дом · stage 1 (Am–Dm)</option>
+        <option value="nashdom2">Наш дом · stage 2 (Am–Dm–G–C + бой)</option>
+        <option value="nashdom3">Наш дом · stage 3 (full verse + бой)</option>
+      </select>
+    </span>
+    <span class="opt">Speed
+      <input type="range" id="speed" min="0.25" max="1.5" step="0.05" value="1" list="speedTicks">
+      <datalist id="speedTicks"><option value="1"></option></datalist>
+      <button class="ctrl secondary" id="speedVal" title="Reset to 1×">1.0×</button>
+    </span>
+    <button class="gear-btn" id="gearBtn" aria-label="Settings" title="Settings">⚙</button>
+  </div>
+
+  <!-- Settings drawer (gear button is added once, below) -->
+  <div class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head"><h2>⚙ Settings</h2><button class="drawer-close" id="drawerClose" aria-label="Close">✕</button></div>
+    <div class="set-row">
+      <span class="set-label">Loop</span>
+      <span class="set-ctl"><input type="checkbox" id="loop" checked style="accent-color:var(--accent)"></span>
+    </div>
+    <div class="set-row">
+      <span class="set-label">String order</span>
+      <span class="set-ctl">
+        <select id="orient">
+          <option value="high-top">High e on top</option>
+          <option value="low-top">Low E on top</option>
+        </select>
+      </span>
+    </div>
+    <div class="set-row" id="backingOpt" style="display:none">
+      <span class="set-label"><span id="backingLabel">🥁 Backing</span></span>
+      <span class="set-ctl"><input type="checkbox" id="backing" style="accent-color:var(--accent)"></span>
+    </div>
+    <div class="set-row" id="syncOpt" style="display:none; flex-direction:column; align-items:stretch">
+      <span class="set-label">Audio sync <span style="color:var(--muted);font-weight:400">(Bluetooth delay)</span></span>
+      <span class="set-ctl" style="justify-content:space-between; margin-top:8px">
+        <span>
+          <button class="step" id="syncDown" aria-label="decrease">−</button>
+          <span id="syncVal" style="display:inline-block;min-width:56px;text-align:center">0 ms</span>
+          <button class="step" id="syncUp" aria-label="increase">+</button>
+        </span>
+        <button class="ctrl secondary tap" id="syncTap">🫰 Tap to sync</button>
+      </span>
+    </div>
+    <div class="set-row" id="micSyncOpt" style="flex-direction:column; align-items:stretch">
+      <span class="set-label">Mic sync <span style="color:var(--muted);font-weight:400">(scoring delay)</span></span>
+      <span class="set-ctl" style="justify-content:space-between; margin-top:8px">
+        <span>
+          <button class="step" id="micSyncDown" aria-label="decrease">−</button>
+          <span id="micSyncVal" style="display:inline-block;min-width:56px;text-align:center">0 ms</span>
+          <button class="step" id="micSyncUp" aria-label="increase">+</button>
+        </span>
+        <button class="ctrl secondary tap" id="micSyncTap">🎸 Strum to sync</button>
+      </span>
+    </div>
+  </div>
+
+  <div class="scorebar">
+    <span>Hits <b class="hit" id="hits">0</b></span>
+    <span>Missed <b class="miss" id="missed">0</b></span>
+    <span>Upcoming <b id="remaining">0</b></span>
+    <span>Best <b id="best">—</b></span>
+  </div>
+
+  <p class="legend">Strings run top (thin high E) to bottom (thick low E), like tab. Each bubble shows the <b>fret number</b> to press on that string. A bubble lights <b style="color:var(--hit)">green</b> when the mic hears the right note as it crosses the line, <b style="color:var(--miss)">orange</b> if it passes unplayed. Mic scoring is optional — you can just follow along. On the Seven Nation Army riff, flip on <b>🥁 Backing</b> for a drum-and-bass groove to play along to. On <b>Bluetooth headphones</b> the audio lags the visuals — tap <b>🫰 Tap to sync</b> and tap along to the beeps to measure it automatically, or nudge <b>−/+</b> by hand. If scoring feels like it <b>misses notes you played right</b>, your mic signal is arriving late — open <b>🎸 Strum to sync</b> (mic on) and strum along to the clicks so scoring judges your playing at the moment the sound actually lands. Both settings are saved on this device until you change them.</p>
+
+  <!-- Tap-to-sync calibration modal -->
+  <div class="cal-backdrop" id="calBackdrop" hidden>
+    <div class="cal" role="dialog" aria-modal="true" aria-labelledby="cal-title">
+      <h2 id="cal-title">Tap to sync</h2>
+      <p class="cal-help" id="calHelp">Put on your headphones. A beep plays on every beat — <b>tap the big button (or press the spacebar) exactly when you HEAR each beep.</b> After several taps the app sets your audio delay automatically.</p>
+      <div class="cal-count" id="calCount">Get ready…</div>
+      <button class="cal-tap" id="calTap">TAP</button>
+      <div class="cal-reading" id="calReading">—</div>
+      <div class="cal-actions">
+        <button class="ctrl secondary" id="calCancel">Cancel</button>
+        <button class="ctrl" id="calUse" disabled>Use this delay</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>Runs entirely on your device. No audio leaves your browser.</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- Settings drawer open/close (shared pattern across pages) ----------
+  const gearBtn = document.getElementById("gearBtn");
+  const drawer = document.getElementById("drawer");
+  const drawerBackdrop = document.getElementById("drawerBackdrop");
+  const drawerClose = document.getElementById("drawerClose");
+  function openDrawer() { drawer.classList.add("open"); drawerBackdrop.classList.add("open"); drawer.setAttribute("aria-hidden", "false"); }
+  function closeDrawer() { drawer.classList.remove("open"); drawerBackdrop.classList.remove("open"); drawer.setAttribute("aria-hidden", "true"); }
+  gearBtn.addEventListener("click", openDrawer);
+  drawerClose.addEventListener("click", closeDrawer);
+  drawerBackdrop.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+
+  // ---- Orientation (shared across all guitar apps via one localStorage key) ----
+  // "high-top": string 0 (high e) on top — matches the trainer. "low-top": flipped.
+  const ORIENT_KEY = "guitar.orientation";
+  let orient = "high-top";
+  try { orient = localStorage.getItem(ORIENT_KEY) || "high-top"; } catch (e) {}
+  // display row for a string index (0=high e .. 5=low E)
+  function rowOf(stringIdx) { return orient === "low-top" ? (5 - stringIdx) : stringIdx; }
+  const orientSel = document.getElementById("orient");
+  if (orientSel) {
+    orientSel.value = orient;
+    orientSel.addEventListener("change", () => {
+      orient = orientSel.value;
+      try { localStorage.setItem(ORIENT_KEY, orient); } catch (e) {}
+      draw(playing ? (performance.now() / 1000 - startTime) * speed : pausedAt);
+    });
+  }
+
+  // ---- Guitar model ------------------------------------------------------
+  // Strings top->bottom in the display: high E (thin) at top, low E (thick) at bottom.
+  // openMidi is the MIDI note of the open string.
+  const STRINGS = [
+    { label: "e", openMidi: 64 }, // high E4  (top)
+    { label: "B", openMidi: 59 }, // B3
+    { label: "G", openMidi: 55 }, // G3
+    { label: "D", openMidi: 50 }, // D3
+    { label: "A", openMidi: 45 }, // A2
+    { label: "E", openMidi: 40 }, // low E2 (bottom)
+  ];
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const A4 = 440;
+  function midiToFreq(m) { return A4 * Math.pow(2, (m - 69) / 12); }
+  function noteMidi(stringIdx, fret) { return STRINGS[stringIdx].openMidi + fret; }
+
+  // ---- Chord voicings + strum patterns (defined BEFORE TRACKS, which uses them) ----
+  // Open-chord voicings: [string, fret] per played string (muted strings omitted).
+  // Strings: 0=high e, 1=B, 2=G, 3=D, 4=A, 5=low E.
+  const SHAPES = {
+    C:  [[4,3],[3,2],[2,0],[1,1],[0,0]],
+    Am: [[4,0],[3,2],[2,2],[1,1],[0,0]],
+    Dm: [[3,0],[2,2],[1,3],[0,1]],            // D–A–D–F
+    Em: [[5,0],[4,2],[3,2],[2,0],[1,0],[0,0]],
+    E:  [[5,0],[4,2],[3,2],[2,1],[1,0],[0,0]],
+    F:  [[3,3],[2,2],[1,1],[0,1]],            // simplified 4-string F
+    G:  [[5,3],[4,2],[3,0],[2,0],[1,0],[0,3]],
+  };
+
+  // Strum patterns: strum positions as BEATS FROM THE BAR START (0 = downbeat
+  // "1", 1 = beat "2", etc.) within a 4-beat bar.
+  // "simple"    — strums on beats 1 and 3 (a clean two-per-bar practice feel).
+  // "shesterka" — the classic Russian "бой шестёрка" (six strokes): down, down,
+  //   up, up, down, up — on "1, 2, &2, &3, 4, &4" = offsets 0, 1, 1.5, 2.5, 3, 3.5.
+  const STRUM_PATTERNS = {
+    simple: [1, 3],
+    shesterka: [0, 1, 1.5, 2.5, 3, 3.5],
+  };
+
+  // Build chord-track notes from any chord-name sequence: one chord per bar,
+  // strummed at the offsets of the chosen pattern. A chord is just a set of
+  // notes sharing a beat (the renderer draws them stacked).
+  function seqVoicings(order, pattern) {
+    const offsets = STRUM_PATTERNS[pattern] || STRUM_PATTERNS.simple;
+    const out = [];
+    order.forEach((name, bar) => {
+      const base = bar * 4;
+      const shape = SHAPES[name];
+      offsets.forEach(off => {
+        shape.forEach(([s, f]) => out.push({ beat: base + off, string: s, fret: f }));
+      });
+    });
+    return out;
+  }
+  // Banner labels: one chord name per bar for a given sequence.
+  function seqChords(order) {
+    return order.map((name, bar) => ({ beat: bar * 4, name, quality: "open chord" }));
+  }
+  function chordVoicings() { return seqVoicings(["C", "Am", "F", "G"]); }
+
+  // ---- Sample tracks -----------------------------------------------------
+  // beat: position in beats from start. string: index into STRINGS. fret: number.
+  // A chord-label banner appears at the given beat and stays until the next.
+  const BPM = 100;
+  const TRACKS = {
+    scale: {
+      name: "C-major scale",
+      bpm: 100,
+      backing: true, backingStyle: "metronome",
+      leadInBeats: 4,
+      chords: [ { beat: 0, name: "C", quality: "major scale" } ],
+      notes: [
+        // C major scale ascending then descending on strings A/D/B/e
+        { beat: 1,  string: 4, fret: 3 }, // C3 (A string, 3rd)
+        { beat: 2,  string: 3, fret: 0 }, // D3
+        { beat: 3,  string: 3, fret: 2 }, // E3
+        { beat: 4,  string: 3, fret: 3 }, // F3
+        { beat: 5,  string: 2, fret: 0 }, // G3
+        { beat: 6,  string: 2, fret: 2 }, // A3
+        { beat: 7,  string: 1, fret: 0 }, // B3
+        { beat: 8,  string: 1, fret: 1 }, // C4
+        { beat: 10, string: 1, fret: 1 }, // C4
+        { beat: 11, string: 1, fret: 0 }, // B3
+        { beat: 12, string: 2, fret: 2 }, // A3
+        { beat: 13, string: 2, fret: 0 }, // G3
+        { beat: 14, string: 3, fret: 3 }, // F3
+        { beat: 15, string: 3, fret: 2 }, // E3
+        { beat: 16, string: 3, fret: 0 }, // D3
+        { beat: 17, string: 4, fret: 3 }, // C3
+      ]
+    },
+    riff: {
+      name: "Seven Nation Army (riff)",
+      bpm: 84,
+      // Whole riff stays on ONE string (the A string, index 4) — the way it's
+      // usually taught. Pitches: E E G E D C. Frets on A string: 7 7 10 7 5 3.
+      backing: true, backingStyle: "band",   // full drum + bass groove
+      chords: [ { beat: 0, name: "E", quality: "main riff · one string" } ],
+      leadInBeats: 4,             // count-in bar applied by loadTrack
+      notes: [
+        // phrase 1 (beats are pre-lead-in; loadTrack adds leadInBeats)
+        { beat: 1,   string: 4, fret: 7 },  // E
+        { beat: 2.5, string: 4, fret: 7 },  // E
+        { beat: 3,   string: 4, fret: 10 }, // G
+        { beat: 4,   string: 4, fret: 7 },  // E
+        { beat: 5,   string: 4, fret: 5 },  // D
+        { beat: 6,   string: 4, fret: 3 },  // C
+        // phrase 2 (repeat)
+        { beat: 9,   string: 4, fret: 7 },  // E
+        { beat: 10.5,string: 4, fret: 7 },  // E
+        { beat: 11,  string: 4, fret: 10 }, // G
+        { beat: 12,  string: 4, fret: 7 },  // E
+        { beat: 13,  string: 4, fret: 5 },  // D
+        { beat: 14,  string: 4, fret: 3 },  // C
+      ]
+    },
+    chords: {
+      name: "Open chords: C – Am – F – G",
+      bpm: 80,
+      backing: true, backingStyle: "metronome",
+      leadInBeats: 4,
+      chordMode: true,   // lenient scoring: any correct chord tone counts
+      // one chord per bar (4 beats); strummed on beats 1 and 3 of each bar
+      chords: [
+        { beat: 0,  name: "C",  quality: "open chord" },
+        { beat: 4,  name: "Am", quality: "open chord" },
+        { beat: 8,  name: "F",  quality: "open chord (mini)" },
+        { beat: 12, name: "G",  quality: "open chord" },
+      ],
+      // Strings: 0=high e, 1=B, 2=G, 3=D, 4=A, 5=low E.
+      // Each chord is a group of same-beat notes = one strum.
+      notes: chordVoicings(),
+    },
+
+    // "Наш дом" (Mashina Vremeni) — progressive chord trainer, A-minor.
+    // Commonly-published open chords, graded from 2 chords up to the full verse.
+    // Stage 1: the two core chords, slow — just the Am↔Dm change.
+    nashdom1: {
+      name: "Наш дом · stage 1 (Am–Dm)",
+      bpm: 66,
+      backing: true, backingStyle: "song", backingLight: true,
+      leadInBeats: 4,
+      chordMode: true,
+      chords: seqChords(["Am", "Dm", "Am", "Dm"]),
+      notes: seqVoicings(["Am", "Dm", "Am", "Dm"]),
+    },
+    // Stage 2: add G and C — the four chords, now with the Russian "шестёрка"
+    // strum (down, down, up, up, down, up) instead of a flat two-per-bar.
+    nashdom2: {
+      name: "Наш дом · stage 2 (Am–Dm–G–C + бой)",
+      bpm: 72,
+      backing: true, backingStyle: "song",
+      leadInBeats: 4,
+      chordMode: true,
+      chords: seqChords(["Am", "Dm", "G", "C"]),
+      notes: seqVoicings(["Am", "Dm", "G", "C"], "shesterka"),
+    },
+    // Stage 3: full commonly-played verse loop with the шестёрка strum,
+    // resolving through E back to Am.
+    nashdom3: {
+      name: "Наш дом · stage 3 (full verse + бой)",
+      bpm: 80,
+      backing: true, backingStyle: "song",
+      leadInBeats: 4,
+      chordMode: true,
+      chords: seqChords(["Am", "Dm", "G", "C", "F", "Dm", "E", "Am"]),
+      notes: seqVoicings(["Am", "Dm", "G", "C", "F", "Dm", "E", "Am"], "shesterka"),
+    },
+  };
+
+  // ---- Canvas / layout ---------------------------------------------------
+  const canvas = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  function fitCanvas() {
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+    canvas.width = cssW * DPR; canvas.height = cssH * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    W = cssW; H = cssH;
+  }
+  let W = 920, H = 300;
+
+  const HIT_X_FRAC = 0.26;          // x position of the "now" hit line
+  const PIXELS_PER_BEAT = 150;      // horizontal scale
+  const BUBBLE_COLORS = ["var", "var", "var"]; // assigned per-string below
+  const STR_COLOR = ["#2f9bf7", "#b14cff", "#f0a830", "#f0a830", "#b14cff", "#2f9bf7"];
+
+  // ---- State -------------------------------------------------------------
+  const playBtn = document.getElementById("play");
+  const restartBtn = document.getElementById("restart");
+  const micBtn = document.getElementById("mic");
+  const micDot = document.getElementById("micDot");
+  const trackSel = document.getElementById("track");
+  const speedInput = document.getElementById("speed");
+  const speedVal = document.getElementById("speedVal");
+  const loopInput = document.getElementById("loop");
+  const backingInput = document.getElementById("backing");
+  const backingOpt = document.getElementById("backingOpt");
+  const backingLabel = document.getElementById("backingLabel");
+  const syncOpt = document.getElementById("syncOpt");
+  const syncVal = document.getElementById("syncVal");
+  const syncDown = document.getElementById("syncDown");
+  const syncUp = document.getElementById("syncUp");
+  const syncTap = document.getElementById("syncTap");
+  const micSyncVal = document.getElementById("micSyncVal");
+  const micSyncDown = document.getElementById("micSyncDown");
+  const micSyncUp = document.getElementById("micSyncUp");
+  const micSyncTap = document.getElementById("micSyncTap");
+  // calibration modal
+  const calBackdrop = document.getElementById("calBackdrop");
+  const calCount = document.getElementById("calCount");
+  const calTap = document.getElementById("calTap");
+  const calReading = document.getElementById("calReading");
+  const calCancel = document.getElementById("calCancel");
+  const calUse = document.getElementById("calUse");
+  const calTitle = document.getElementById("cal-title");
+  const calHelp = document.getElementById("calHelp");
+  const hitsEl = document.getElementById("hits");
+  const missedEl = document.getElementById("missed");
+  const remainingEl = document.getElementById("remaining");
+  const bestEl = document.getElementById("best");
+  const chordBanner = document.getElementById("chordBanner");
+
+  // ---- Local progress store (per-browser; nothing leaves the device) -----
+  const STORE_KEY = "guitar.fretplayer.v1";
+  function loadStore() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+    catch (e) { return {}; }
+  }
+  function saveStore(s) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+  // best = highest hits/total percent recorded for a track (mic runs only)
+  function getBest(trackKey) {
+    const s = loadStore();
+    return s[trackKey] && typeof s[trackKey].bestPct === "number" ? s[trackKey] : null;
+  }
+  function recordRun(trackKey, hitCount, totalNotes) {
+    if (!totalNotes) return;
+    const pct = Math.round((hitCount / totalNotes) * 100);
+    const s = loadStore();
+    const prev = s[trackKey] || { bestPct: -1, runs: 0 };
+    s[trackKey] = {
+      bestPct: Math.max(prev.bestPct, pct),
+      bestHits: pct >= prev.bestPct ? hitCount : (prev.bestHits || 0),
+      total: totalNotes,
+      runs: (prev.runs || 0) + 1,
+      last: new Date().toISOString(),
+    };
+    saveStore(s);
+    showBest(trackKey);
+  }
+  function showBest(trackKey) {
+    const b = getBest(trackKey);
+    bestEl.textContent = b ? `${b.bestPct}% (${b.runs} run${b.runs === 1 ? "" : "s"})` : "—";
+  }
+
+  let track, trackKey = "scale", notes, playing = false, startTime = 0, pausedAt = 0, speed = 1, rafId = null;
+  let hits = 0, missed = 0, runRecorded = false;
+  let chordMode = false, beatPitchClasses = {}, beatPlayedStrings = {}, missedBeats = new Set();
+  let trackChords = [];          // chord-banner labels, shifted by the lead-in
+
+  // Mic / pitch detection
+  let audioCtx = null, analyser = null, micStream = null, pbuf = null;
+  let micOn = false, currentHeardMidi = null;
+  let heardPcHistory = [];       // rolling {pc,t} of recently heard pitch classes
+
+  // ---- Backing track synth (Web Audio) -----------------------------------
+  // A small drum + bass groove generated with oscillators, scheduled ahead of
+  // the visual playhead so it stays tight. Entirely synthesized — no samples.
+  let bCtx = null;                 // dedicated AudioContext for backing
+  let bMaster = null;
+  let schedBeat = 0;               // next beat index not yet scheduled
+  const SCHED_AHEAD = 0.25;        // seconds of lookahead
+  // Audio-sync offset: how many SECONDS earlier to play backing so it reaches
+  // the ear (esp. over laggy Bluetooth) right as the note crosses the line.
+  let syncOffset = 0;
+  const SYNC_KEY = "guitar.fretplayer.syncMs";
+  // Mic-sync offset: how many SECONDS late the mic signal reaches the detector
+  // (string -> mic -> Bluetooth/OS buffer -> browser). Scoring credits a note
+  // against where it was this long ago, so a correctly-played note isn't marked
+  // missed just because its sound arrived after the bubble crossed the line.
+  let micLatency = 0;
+  const MICSYNC_KEY = "guitar.fretplayer.micSyncMs";
+
+  let bUnlocked = false;
+  function ensureBackingCtx() {
+    if (!bCtx) {
+      bCtx = new (window.AudioContext || window.webkitAudioContext)();
+      bMaster = bCtx.createGain();
+      bMaster.gain.value = 0.9;
+      bMaster.connect(bCtx.destination);
+    }
+    // Android/iOS: resume MUST be driven from a user gesture, and the context
+    // needs a silent buffer kicked once to truly unlock output.
+    if (bCtx.state === "suspended") bCtx.resume();
+    if (!bUnlocked) {
+      try {
+        const b = bCtx.createBuffer(1, 1, bCtx.sampleRate);
+        const s = bCtx.createBufferSource();
+        s.buffer = b; s.connect(bCtx.destination); s.start(0);
+        bUnlocked = true;
+      } catch (e) {}
+    }
+  }
+
+  // percussion: kick (sine thump), snare (noise burst), hat (short noise)
+  function kick(t) {
+    const o = bCtx.createOscillator(), g = bCtx.createGain();
+    o.frequency.setValueAtTime(140, t);
+    o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    g.gain.setValueAtTime(0.9, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g).connect(bMaster); o.start(t); o.stop(t + 0.2);
+  }
+  function noise(t, dur, hp, level) {
+    const n = Math.floor(bCtx.sampleRate * dur);
+    const buf = bCtx.createBuffer(1, n, bCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = bCtx.createBufferSource(); src.buffer = buf;
+    const f = bCtx.createBiquadFilter(); f.type = "highpass"; f.frequency.value = hp;
+    const g = bCtx.createGain();
+    g.gain.setValueAtTime(level, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f).connect(g).connect(bMaster); src.start(t); src.stop(t + dur);
+  }
+  const snare = t => noise(t, 0.18, 1200, 0.5);
+  const hat   = t => noise(t, 0.05, 7000, 0.22);
+
+  // bass note (saw through a lowpass) at a given midi pitch
+  function bass(t, midi, dur) {
+    const o = bCtx.createOscillator(), g = bCtx.createGain(), f = bCtx.createBiquadFilter();
+    o.type = "sawtooth"; o.frequency.value = midiToFreq(midi - 12); // an octave down
+    f.type = "lowpass"; f.frequency.value = 600;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(f).connect(g).connect(bMaster); o.start(t); o.stop(t + dur + 0.05);
+  }
+
+  // metronome click: a short pitched blip, higher/louder on the downbeat
+  function click(t, accent) {
+    const o = bCtx.createOscillator(), g = bCtx.createGain();
+    o.type = "square";
+    o.frequency.value = accent ? 2000 : 1000;
+    const level = accent ? 0.35 : 0.2;
+    g.gain.setValueAtTime(level, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+    o.connect(g).connect(bMaster); o.start(t); o.stop(t + 0.06);
+  }
+
+  // Chord in effect at a (lead-shifted) beat index, or null during the count-in.
+  function chordAtBeat(beatIdx) {
+    let cur = null;
+    for (const c of trackChords) if (c.beat <= beatIdx) cur = c;
+    return cur;
+  }
+  // Bass-register MIDI for a chord name's root (bass() drops it an octave, so
+  // this lands around E2..D#3). Returns null for unknown names.
+  const CHORD_ROOT_PC = { C: 0, Am: 9, Dm: 2, Em: 4, E: 4, F: 5, G: 7 };
+  function chordRootMidi(name) {
+    const pc = CHORD_ROOT_PC[name];
+    return pc == null ? null : 52 + ((pc - 4 + 12) % 12);
+  }
+
+  // Schedule one beat's worth of backing, per the track's style.
+  function scheduleBeat(beatIdx, when, secPerBeat) {
+    const style = (track && track.backingStyle) || "band";
+    const inBar = ((beatIdx % 4) + 4) % 4;
+
+    if (style === "metronome") {
+      // simple click track: accented downbeat (beat 1 of each bar)
+      click(when, inBar === 0);
+      return;
+    }
+
+    if (style === "song") {
+      // Chord-following band for song tracks: count-in, then drums + a bass
+      // that plays the CURRENT chord's root (and its octave). No chord pad on
+      // purpose — the mic would hear it through the speaker and score it as
+      // your strums. Bass stays on one pitch class per chord to limit bleed.
+      const cur = chordAtBeat(beatIdx);
+      if (!cur) {                      // count-in bar: accented click + hats
+        click(when, inBar === 0);
+        hat(when + secPerBeat / 2);
+        return;
+      }
+      const light = !!track.backingLight;   // gentler feel for early stages
+      if (inBar === 0 || inBar === 2) kick(when);
+      if (!light && (inBar === 1 || inBar === 3)) snare(when);
+      if (light) { if (inBar === 1 || inBar === 3) hat(when); }
+      else { hat(when); hat(when + secPerBeat / 2); }
+      const root = chordRootMidi(cur.name);
+      if (root != null) {
+        if (inBar === 0) bass(when, root, secPerBeat * 1.8);
+        if (inBar === 2) bass(when, root, secPerBeat * 0.9);
+        if (!light && inBar === 2) bass(when + secPerBeat / 2, root + 12, secPerBeat * 0.4);
+      }
+      return;
+    }
+
+    // "band": drums + bass groove
+    // drums: kick on 1 & 3, snare on 2 & 4, hats on every eighth
+    if (inBar === 0 || inBar === 2) kick(when);
+    if (inBar === 1 || inBar === 3) snare(when);
+    hat(when); hat(when + secPerBeat / 2);
+    // bass: follow any riff note landing on this beat, else a root pulse
+    const here = notes.filter(n => Math.floor(n.beat) === beatIdx);
+    if (here.length) {
+      for (const n of here) bass(when + (n.beat - beatIdx) * secPerBeat, n.midi, secPerBeat * 0.9);
+    } else if (inBar === 0) {
+      bass(when, 40, secPerBeat * 0.9); // low E root on the downbeat when idle
+    }
+  }
+
+  // Called from the tick loop: queue any beats whose time is within lookahead.
+  function pumpBacking(songSec) {
+    if (!backingInput.checked || !track || !track.backing) return;
+    ensureBackingCtx();                         // make sure ctx exists + is running
+    if (bCtx.state !== "running") return;       // resume is async; try next frame
+    const secPerBeat = 60 / track.bpm;
+    const total = songLengthSec();
+    const audioNow = bCtx.currentTime;
+    while (schedBeat * secPerBeat < songSec + SCHED_AHEAD * speed) {
+      const beatSong = schedBeat * secPerBeat;
+      if (beatSong > total) { schedBeat++; continue; }
+      const when = audioNow + (beatSong - songSec) / speed - syncOffset;
+      // schedule slightly in the past -> nudge to "now" so we never drop a beat
+      scheduleBeat(schedBeat, Math.max(audioNow, when), secPerBeat / speed);
+      schedBeat++;
+    }
+  }
+
+  function startBacking(songSec) {
+    if (!track || !track.backing || !backingInput.checked) return;
+    ensureBackingCtx();                         // user gesture (Play) resumes ctx
+    schedBeat = Math.max(0, Math.floor(songSec / (60 / track.bpm)));
+  }
+  function stopBacking() {
+    // suspend only the backing groove; the calibration modal manages its own.
+    if (bCtx && bCtx.state === "running" && !calActive) bCtx.suspend();
+  }
+
+  function loadTrack(key) {
+    track = TRACKS[key];
+    trackKey = key;
+    speed = parseFloat(speedInput.value);
+    // Build note objects with absolute seconds + derived display data.
+    // leadInBeats shifts every note later so a count-in bar plays first.
+    const secPerBeat = 60 / track.bpm;
+    const lead = track.leadInBeats || 0;
+    notes = track.notes.map(n => {
+      const midi = noteMidi(n.string, n.fret);
+      const beat = n.beat + lead;
+      return {
+        ...n,
+        beat,                      // beat including lead-in (used everywhere)
+        t: beat * secPerBeat,      // seconds into the song
+        midi,
+        state: "pending",          // pending | hit | missed
+        color: STR_COLOR[n.string]
+      };
+    });
+    // Chord-banner labels must be shifted by the SAME lead-in as the notes,
+    // or the banner runs a bar ahead of the frets it describes.
+    trackChords = (track.chords || []).map(c => ({ ...c, beat: c.beat + lead }));
+    // In chord mode, group pitch-classes by beat so the mic hearing ANY tone
+    // of a strum marks the whole chord group hit (single-note detection can't
+    // verify every string of a strummed chord).
+    chordMode = !!track.chordMode;
+    beatPitchClasses = {};
+    beatPlayedStrings = {};
+    if (chordMode) {
+      for (const n of notes) {
+        (beatPitchClasses[n.beat] = beatPitchClasses[n.beat] || new Set()).add(((n.midi % 12) + 12) % 12);
+        (beatPlayedStrings[n.beat] = beatPlayedStrings[n.beat] || new Set()).add(n.string);
+      }
+    }
+    hits = 0; missed = 0; pausedAt = 0; playing = false; missedBeats = new Set(); runRecorded = false;
+    showBest(key);
+    // backing switch: label by style, default ON for every track
+    backingOpt.style.display = track.backing ? "" : "none";
+    syncOpt.style.display = track.backing ? "" : "none";
+    backingInput.checked = !!track.backing;
+    backingLabel.textContent = track.backingStyle === "metronome" ? "🎵 Metronome" : "🥁 Backing";
+    schedBeat = 0;
+    updateScore();
+    playBtn.textContent = "▶ Play";
+    draw(0);
+  }
+
+  function songLengthSec() {
+    const secPerBeat = 60 / track.bpm;
+    const lead = track.leadInBeats || 0;
+    const lastBeat = Math.max(...track.notes.map(n => n.beat)) + lead + 4;
+    return lastBeat * secPerBeat;
+  }
+
+  function currentChord(songSec) {
+    const secPerBeat = 60 / track.bpm;
+    const list = trackChords.length ? trackChords : (track.chords || []);
+    let cur = list[0];
+    // Switch the banner right as the chord's first strum reaches the line
+    // (a hair early feels natural), using the SAME lead-shifted beats as notes.
+    for (const c of list) if (songSec >= c.beat * secPerBeat - 0.15) cur = c;
+    return cur;
+  }
+
+  // ---- Main loop ---------------------------------------------------------
+  function tick() {
+    const now = performance.now() / 1000;
+    const songSec = (now - startTime) * speed;
+    scoreAndExpire(songSec);
+    pumpBacking(songSec);
+    draw(songSec);
+    if (songSec > songLengthSec()) {
+      // record the completed pass (mic runs only, chord track excluded)
+      if (micOn && !chordMode && !runRecorded) {
+        recordRun(trackKey, hits, notes.length);
+      }
+      if (loopInput.checked) {
+        // start a fresh pass: reset note states + score, restart the clock
+        resetNotes();
+        runRecorded = false;       // allow the next pass to record again
+        pausedAt = 0;
+        startTime = performance.now() / 1000;
+        schedBeat = 0;             // re-queue the groove from the top
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
+      stop(); return;
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // Reset all notes to pending and clear the running tally (used by loop restart)
+  function resetNotes() {
+    for (const n of notes) n.state = "pending";
+    hits = 0; missed = 0; missedBeats = new Set();
+    updateScore();
+  }
+
+  function scoreAndExpire(songSec) {
+    const HIT_WINDOW = 0.28; // seconds around the line we accept a hit
+    for (const n of notes) {
+      if (n.state !== "pending") continue;
+      // dtHeard: how far the note is from the moment the mic's sound represents.
+      // The mic signal arrives micLatency seconds late, so when we hear the
+      // correct pitch the note's crossing was micLatency ago — subtract it so
+      // the accept window is centered on when the sound actually lands.
+      const dt = songSec - n.t;
+      const dtHeard = dt - micLatency;
+      if (micOn && Math.abs(dtHeard) <= HIT_WINDOW && currentHeardMidi !== null) {
+        if (chordMode) {
+          // Require GENUINE chord content: count distinct chord-tone pitch
+          // classes heard across the strum window, and demand at least a couple
+          // of them (not one lucky string). This rejects "any strum", a single
+          // open string, or a wrong chord whose tones aren't in this chord.
+          const allowed = beatPitchClasses[n.beat];
+          if (allowed) {
+            const need = Math.min(2, allowed.size);       // 2-tone shapes need 2
+            const seen = recentChordTones(allowed, (HIT_WINDOW * 2) * 1000);
+            if (seen.size >= need) {
+              notes.forEach(m => { if (m.beat === n.beat && m.state === "pending") m.state = "hit"; });
+              hits++; updateScore();
+            }
+          }
+        } else if (Math.abs(currentHeardMidi - n.midi) <= 0.6) {
+          // single-note: accept if heard pitch matches within ~60 cents
+          n.state = "hit"; hits++; updateScore();
+        }
+      }
+      if (n.state === "pending" && dt > HIT_WINDOW + micLatency) {
+        // passed the line without a hit (waited out the mic-latency delay too)
+        if (chordMode) {
+          // mark the whole strum group missed at once, count one miss
+          let already = missedBeats.has(n.beat);
+          notes.forEach(m => { if (m.beat === n.beat && m.state === "pending") m.state = micOn ? "missed" : "passed"; });
+          if (micOn && !already) { missed++; missedBeats.add(n.beat); }
+        } else {
+          n.state = micOn ? "missed" : "passed";
+          if (micOn) missed++;
+        }
+        updateScore();
+      }
+    }
+  }
+
+  function updateScore() {
+    hitsEl.textContent = hits;
+    missedEl.textContent = missed;
+    remainingEl.textContent = notes.filter(n => n.state === "pending").length;
+  }
+
+  // ---- Drawing -----------------------------------------------------------
+  function draw(songSec) {
+    ctx.clearRect(0, 0, W, H);
+    const hitX = W * HIT_X_FRAC;
+    const topPad = 34, botPad = 24;
+    const laneH = (H - topPad - botPad) / (STRINGS.length - 1);
+
+    // string lines (positioned by orientation; low E is always the thickest)
+    for (let i = 0; i < STRINGS.length; i++) {
+      const row = rowOf(i);
+      const y = topPad + row * laneH;
+      const thickness = 1 + i * 0.5; // thicker toward the low E string
+      ctx.strokeStyle = "rgba(200,210,225,0.28)";
+      ctx.lineWidth = thickness;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      // string label at far left
+      ctx.fillStyle = "rgba(200,210,225,0.5)";
+      ctx.font = "12px -apple-system, sans-serif";
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(STRINGS[i].label, 6, y);
+    }
+
+    // beat grid
+    const secPerBeat = 60 / track.bpm;
+    const pxPerSec = PIXELS_PER_BEAT / secPerBeat;
+    const firstBeat = Math.floor((songSec - hitX / pxPerSec) / secPerBeat);
+    for (let b = firstBeat; b < firstBeat + 20; b++) {
+      const x = hitX + (b * secPerBeat - songSec) * pxPerSec;
+      if (x < -20 || x > W + 20) continue;
+      ctx.strokeStyle = (b % 4 === 0) ? "rgba(120,140,170,0.25)" : "rgba(120,140,170,0.1)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, topPad - 6); ctx.lineTo(x, H - botPad + 6); ctx.stroke();
+    }
+
+    // hit line
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(hitX, topPad - 14); ctx.lineTo(hitX, H - botPad + 14); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.font = "10px -apple-system, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    ctx.fillText("NOW", hitX, topPad - 16);
+
+    // note bubbles
+    const R = Math.min(17, laneH * 0.42);
+
+    // In chord mode, mark muted (unplayed) strings with an × so a skipped
+    // string reads as "don't play" rather than a missing marker.
+    if (chordMode) {
+      const secPerBeat2 = 60 / track.bpm;
+      for (const beatKey in beatPlayedStrings) {
+        const beat = Number(beatKey);
+        const groupT = beat * secPerBeat2;
+        const x = hitX + (groupT - songSec) * pxPerSec;
+        if (x < -R * 2 || x > W + R * 2) continue;
+        const played = beatPlayedStrings[beat];
+        for (let s = 0; s < STRINGS.length; s++) {
+          if (played.has(s)) continue;
+          const y = topPad + rowOf(s) * laneH;
+          ctx.strokeStyle = "rgba(180,190,205,0.5)";
+          ctx.lineWidth = 2.5;
+          const r = R * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
+          ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+          ctx.stroke();
+        }
+      }
+    }
+
+    for (const n of notes) {
+      const x = hitX + (n.t - songSec) * pxPerSec;
+      if (x < -R * 2 || x > W + R * 2) continue;
+      const y = topPad + rowOf(n.string) * laneH;
+      let fill = n.color, alpha = 1, ring = null;
+      if (n.state === "hit") { fill = "var"; }
+      if (n.state === "hit") { fill = "#3fb950"; ring = "#3fb950"; }
+      else if (n.state === "missed") { fill = "#f0883e"; alpha = 0.55; }
+      else if (n.state === "passed") { alpha = 0.35; }
+
+      ctx.globalAlpha = alpha;
+      // glow for notes near the line
+      const near = Math.abs(x - hitX) < 24 && n.state === "pending";
+      if (near) { ctx.shadowColor = n.color; ctx.shadowBlur = 16; } else { ctx.shadowBlur = 0; }
+      ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2);
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.shadowBlur = 0;
+      if (ring) { ctx.lineWidth = 3; ctx.strokeStyle = ring; ctx.stroke(); }
+      // fret number
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#0b1020";
+      ctx.font = "bold " + Math.round(R * 1.05) + "px -apple-system, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(String(n.fret), x, y + 0.5);
+    }
+    ctx.globalAlpha = 1;
+
+    // chord banner
+    const c = currentChord(songSec);
+    chordBanner.innerHTML = c ? `${c.name} <small>${c.quality}</small>` : "";
+  }
+
+  // ---- Transport ---------------------------------------------------------
+  function play() {
+    if (playing) { pause(); return; }
+    playing = true;
+    playBtn.textContent = "⏸ Pause";
+    const songSec = pausedAt;
+    startTime = performance.now() / 1000 - pausedAt / speed;
+    startBacking(songSec);         // (re)arm the groove scheduler from here
+    rafId = requestAnimationFrame(tick);
+  }
+  function pause() {
+    playing = false;
+    playBtn.textContent = "▶ Play";
+    pausedAt = (performance.now() / 1000 - startTime) * speed;
+    if (rafId) cancelAnimationFrame(rafId), rafId = null;
+    stopBacking();
+  }
+  function stop() {
+    playing = false;
+    playBtn.textContent = "▶ Play";
+    if (rafId) cancelAnimationFrame(rafId), rafId = null;
+    stopBacking();
+    pausedAt = songLengthSec();
+    draw(pausedAt);
+  }
+  function restart() {
+    if (rafId) cancelAnimationFrame(rafId), rafId = null;
+    loadTrack(trackSel.value);
+    draw(0);
+  }
+
+  playBtn.addEventListener("click", play);
+  restartBtn.addEventListener("click", restart);
+  trackSel.addEventListener("change", restart);
+  function applySpeed(v) {
+    // Snap to exactly 1× when the slider lands close to it, so 1× is easy to hit.
+    if (Math.abs(v - 1) < 0.06) v = 1;
+    speed = v;
+    speedInput.value = String(v);
+    speedVal.textContent = speed.toFixed(1) + "×";
+    speedVal.classList.toggle("secondary", speed === 1);
+    if (playing) { // keep position continuous across speed change
+      pausedAt = (performance.now() / 1000 - startTime) * speed;
+      startTime = performance.now() / 1000 - pausedAt / speed;
+    }
+  }
+  speedInput.addEventListener("input", () => applySpeed(parseFloat(speedInput.value)));
+  speedVal.addEventListener("click", () => applySpeed(1)); // click the readout to reset to 1×
+
+  const SYNC_MAX = 400, SYNC_STEP = 20;
+  function setSync(ms) {
+    ms = Math.min(SYNC_MAX, Math.max(0, Math.round(ms)));
+    syncOffset = ms / 1000;
+    syncVal.textContent = ms + " ms";
+    try { localStorage.setItem(SYNC_KEY, String(ms)); } catch (e) {}
+  }
+  function curSyncMs() { return Math.round(syncOffset * 1000); }
+  syncDown.addEventListener("click", () => setSync(curSyncMs() - SYNC_STEP));
+  syncUp.addEventListener("click", () => setSync(curSyncMs() + SYNC_STEP));
+
+  // ---- Tap-to-sync calibration -------------------------------------------
+  // Plays a steady click; the user taps when they HEAR each one. The average
+  // (tap time − scheduled click time) is their audio output latency.
+  let calActive = false, calTimer = null, calClickTimes = [], calTaps = [];
+  const CAL_INTERVAL = 0.8;        // seconds between calibration clicks
+  const CAL_NEEDED = 6;            // taps to average
+
+  function openCal() {
+    ensureBackingCtx();
+    calMode = "audio";
+    calTap.textContent = "TAP";
+    calTitle.textContent = "Tap to sync";
+    calHelp.innerHTML = "Put on your headphones. A beep plays on every beat — <b>tap the big button (or press the spacebar) exactly when you HEAR each beep.</b> After several taps the app sets your audio delay automatically.";
+    calActive = true; calClickTimes = []; calTaps = [];
+    calReading.textContent = "—";
+    calCount.textContent = "Listen… tap on each beep";
+    calUse.disabled = true;
+    calBackdrop.hidden = false;
+    scheduleCalClicks();
+  }
+  function scheduleCalClicks() {
+    // keep a rolling horizon of scheduled clicks and remember their audio times
+    const horizon = bCtx.currentTime + 2;
+    let next = calClickTimes.length ? calClickTimes[calClickTimes.length - 1] + CAL_INTERVAL
+                                    : bCtx.currentTime + 0.5;
+    while (next < horizon) {
+      click(next, true);           // reuse the metronome click (accented)
+      calClickTimes.push(next);
+      next += CAL_INTERVAL;
+    }
+    if (calActive) calTimer = setTimeout(scheduleCalClicks, 500);
+  }
+  function registerTap() {
+    if (!calActive) return;
+    const tAudio = bCtx.currentTime;         // when the tap happened on the audio clock
+    // nearest scheduled click at or before this tap
+    let best = null, bestGap = Infinity;
+    for (const ct of calClickTimes) {
+      const gap = tAudio - ct;
+      if (gap >= -0.15 && gap < bestGap) { bestGap = gap; best = ct; }
+    }
+    if (best == null) return;
+    const gapMs = (tAudio - best) * 1000;
+    // ignore wild outliers (> one interval late, or clearly early)
+    if (gapMs < -80 || gapMs > CAL_INTERVAL * 1000 * 0.9) return;
+    calTaps.push(Math.max(0, gapMs));
+    // visual feedback
+    calTap.classList.add("flash");
+    setTimeout(() => calTap.classList.remove("flash"), 90);
+    // trimmed mean once we have enough
+    const n = calTaps.length;
+    calCount.textContent = `${Math.min(n, CAL_NEEDED)} / ${CAL_NEEDED} taps`;
+    if (n >= CAL_NEEDED) {
+      const sorted = [...calTaps].sort((a, b) => a - b);
+      const trimmed = sorted.slice(1, -1);   // drop fastest + slowest
+      const avg = trimmed.reduce((s, v) => s + v, 0) / trimmed.length;
+      calReading.textContent = `Measured delay: ${Math.round(avg)} ms`;
+      calUse.disabled = false;
+      calUse.dataset.ms = String(Math.round(avg));
+    } else {
+      calReading.textContent = `so far ~${Math.round(calTaps.reduce((s,v)=>s+v,0)/n)} ms`;
+    }
+  }
+  function closeCal() {
+    calActive = false;
+    if (calTimer) { clearTimeout(calTimer); calTimer = null; }
+    if (micCalTimer) { clearTimeout(micCalTimer); micCalTimer = null; }
+    if (micCalRaf) { cancelAnimationFrame(micCalRaf); micCalRaf = null; }
+    micCalArmed = false;
+    calTap.textContent = "TAP";
+    calMode = "audio";
+    calBackdrop.hidden = true;
+  }
+  syncTap.addEventListener("click", openCal);
+  calTap.addEventListener("pointerdown", (e) => { e.preventDefault(); registerTap(); });
+  document.addEventListener("keydown", (e) => {
+    if (calActive && e.code === "Space") { e.preventDefault(); registerTap(); }
+  });
+  calCancel.addEventListener("click", closeCal);
+  calUse.addEventListener("click", () => {
+    const ms = parseInt(calUse.dataset.ms || "0", 10);
+    if (calMode === "mic") setMicSync(ms); else setSync(ms);
+    closeCal();
+  });
+
+  // ---- Mic-sync (scoring input latency) ----------------------------------
+  const MICSYNC_MAX = 500, MICSYNC_STEP = 20;
+  function setMicSync(ms) {
+    ms = Math.min(MICSYNC_MAX, Math.max(0, Math.round(ms)));
+    micLatency = ms / 1000;
+    micSyncVal.textContent = ms + " ms";
+    try { localStorage.setItem(MICSYNC_KEY, String(ms)); } catch (e) {}
+  }
+  function curMicSyncMs() { return Math.round(micLatency * 1000); }
+  micSyncDown.addEventListener("click", () => setMicSync(curMicSyncMs() - MICSYNC_STEP));
+  micSyncUp.addEventListener("click", () => setMicSync(curMicSyncMs() + MICSYNC_STEP));
+
+  // Strum-to-sync: play a click, user strums/claps on each one, we detect the
+  // mic onset and measure (onset time − click time) = input/scoring latency.
+  // Reuses the calibration modal; calMode distinguishes it from tap-to-sync.
+  let calMode = "audio";           // "audio" (tap) | "mic" (strum)
+  let micCalArmed = false, micCalClickPN = [], micCalMeas = [], micCalRaf = null;
+  let micCalLastOnset = 0, micCalPrevRms = 0, micCalTimer = null;
+  const MICCAL_INTERVAL = 1.0;     // seconds between strum clicks
+  const MICCAL_NEEDED = 5;
+
+  function openMicCal() {
+    if (!micOn || !analyser) {
+      alert("Turn on 🎤 mic scoring first, then strum to measure your mic delay.");
+      return;
+    }
+    ensureBackingCtx();
+    calMode = "mic";
+    calTitle.textContent = "Strum to sync";
+    calHelp.innerHTML = "A click plays on every beat — <b>strum your guitar (or clap) right when you HEAR each click.</b> The app listens through your mic and measures how late the sound arrives, so scoring credits your playing at the right moment.";
+    calActive = true; micCalArmed = true;
+    micCalClickPN = []; micCalMeas = []; micCalLastOnset = 0; micCalPrevRms = 0;
+    calReading.textContent = "—";
+    calCount.textContent = "Strum (or clap) on each click";
+    calTap.textContent = "listening for your strum…";
+    calUse.disabled = true;
+    calBackdrop.hidden = false;
+    scheduleMicCalClicks();
+    micCalDetect();
+  }
+  function scheduleMicCalClicks() {
+    // schedule a click and remember its performance.now() target (common clock
+    // with mic onset detection and the song clock used for scoring)
+    const horizon = bCtx.currentTime + 2.2;
+    let nextAudio = micCalClickPN.length
+      ? micCalClickPN[micCalClickPN.length - 1].a + MICCAL_INTERVAL
+      : bCtx.currentTime + 0.6;
+    while (nextAudio < horizon) {
+      click(nextAudio, true);
+      // map the audio-clock time to performance.now() ms
+      const pn = performance.now() + (nextAudio - bCtx.currentTime) * 1000;
+      micCalClickPN.push({ a: nextAudio, pn });
+      nextAudio += MICCAL_INTERVAL;
+    }
+    if (calActive && calMode === "mic") micCalTimer = setTimeout(scheduleMicCalClicks, 500);
+  }
+  function micCalDetect() {
+    if (!calActive || calMode !== "mic" || !analyser) return;
+    analyser.getFloatTimeDomainData(pbuf);
+    let rms = 0;
+    for (let i = 0; i < pbuf.length; i++) rms += pbuf[i] * pbuf[i];
+    rms = Math.sqrt(rms / pbuf.length);
+    const nowPN = performance.now();
+    // onset = sharp rise above a floor, with a refractory gap
+    if (rms > 0.04 && micCalPrevRms <= 0.04 && (nowPN - micCalLastOnset) > 350) {
+      micCalLastOnset = nowPN;
+      registerStrumOnset(nowPN);
+    }
+    micCalPrevRms = rms;
+    micCalRaf = requestAnimationFrame(micCalDetect);
+  }
+  function registerStrumOnset(onsetPN) {
+    // nearest click at or just before this onset (onset must come after click)
+    let best = null, bestGap = Infinity;
+    for (const c of micCalClickPN) {
+      const gap = onsetPN - c.pn;
+      if (gap >= -60 && gap < bestGap) { bestGap = gap; best = c; }
+    }
+    if (best == null) return;
+    const gapMs = onsetPN - best.pn;
+    if (gapMs < -60 || gapMs > MICCAL_INTERVAL * 1000 * 0.9) return; // outlier
+    micCalMeas.push(Math.max(0, gapMs));
+    calTap.classList.add("flash");
+    setTimeout(() => calTap.classList.remove("flash"), 90);
+    const n = micCalMeas.length;
+    calCount.textContent = `${Math.min(n, MICCAL_NEEDED)} / ${MICCAL_NEEDED} strums`;
+    if (n >= MICCAL_NEEDED) {
+      const sorted = [...micCalMeas].sort((a, b) => a - b);
+      const trimmed = sorted.slice(1, -1);
+      const avg = trimmed.reduce((s, v) => s + v, 0) / trimmed.length;
+      calReading.textContent = `Measured mic delay: ${Math.round(avg)} ms`;
+      calUse.disabled = false;
+      calUse.dataset.ms = String(Math.round(avg));
+    } else {
+      calReading.textContent = `so far ~${Math.round(micCalMeas.reduce((s,v)=>s+v,0)/n)} ms`;
+    }
+  }
+  micSyncTap.addEventListener("click", openMicCal);
+
+  backingInput.addEventListener("change", () => {
+    if (backingInput.checked) {
+      ensureBackingCtx();
+      // align the scheduler to the current position so it doesn't replay the past
+      const songSec = playing ? (performance.now() / 1000 - startTime) * speed : pausedAt;
+      schedBeat = Math.max(0, Math.floor(songSec / (60 / track.bpm)));
+    } else {
+      stopBacking();
+    }
+  });
+
+  // ---- Start overlay (first-arrival mic prompt, mirrors the tuner) --------
+  const startOverlay = document.getElementById("startOverlay");
+  const startMicBtn = document.getElementById("startMic");
+  const startFollowBtn = document.getElementById("startFollow");
+  function dismissStartOverlay() { if (startOverlay) startOverlay.hidden = true; }
+  startMicBtn.addEventListener("click", async () => {
+    dismissStartOverlay();      // reveal the fretboard right away
+    if (!micOn) await toggleMic();
+  });
+  startFollowBtn.addEventListener("click", dismissStartOverlay);
+
+  // ---- Mic + pitch detection (autocorrelation, same approach as the tuner) ----
+  micBtn.addEventListener("click", toggleMic);
+  async function toggleMic() {
+    if (micOn) { stopMic(); return; }
+    // Defensive: release any lingering stream/context before acquiring a fresh one,
+    // so a page never stacks two mic grabs (a cause of "can't get the mic back").
+    if (micStream) { try { micStream.getTracks().forEach(t => t.stop()); } catch (e) {} micStream = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("This browser can't access the microphone here. A secure (https) connection and a browser that supports getUserMedia are required.");
+      return;
+    }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, autoGainControl: false, noiseSuppression: false }
+      });
+    } catch (e) {
+      alert("Microphone access is needed for live scoring. You can still follow along without it.\n\n"
+            + "If you previously allowed it, another app or tab may be using the mic — close those and try again.\n\n"
+            + (e && e.message ? e.message : e));
+      return;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(micStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    pbuf = new Float32Array(analyser.fftSize);
+    src.connect(analyser);
+    micOn = true;
+    micDot.classList.add("on");
+    micBtn.textContent = "🎤 Mic on — disable";
+    listen();
+  }
+  function stopMic() {
+    micOn = false;
+    micDot.classList.remove("on");
+    micBtn.textContent = "🎤 Enable mic scoring";
+    currentHeardMidi = null;
+    heardPcHistory = [];
+    if (micStream) micStream.getTracks().forEach(t => t.stop()), micStream = null;
+    if (audioCtx) audioCtx.close().catch(() => {}), audioCtx = null;
+    analyser = null;
+  }
+  function listen() {
+    if (!micOn || !analyser) return;
+    analyser.getFloatTimeDomainData(pbuf);
+    const f = autoCorrelate(pbuf, audioCtx.sampleRate);
+    currentHeardMidi = f > 0 ? 69 + 12 * Math.log2(f / A4) : null;
+    // Keep a short rolling history of heard pitch classes. A strummed chord
+    // makes the detected fundamental jump between its strings frame-to-frame,
+    // so over ~0.3s we collect SEVERAL distinct chord tones — whereas a single
+    // open string or silence yields just one (or none). Chord scoring uses this
+    // to require genuine chord content, not merely one lucky tone.
+    if (currentHeardMidi !== null) {
+      const pc = ((Math.round(currentHeardMidi) % 12) + 12) % 12;
+      heardPcHistory.push({ pc, t: performance.now() });
+      if (heardPcHistory.length > 120) heardPcHistory.shift();
+    }
+    requestAnimationFrame(listen);
+  }
+  // Distinct chord-tone pitch classes heard within the last `winMs` ms.
+  function recentChordTones(allowed, winMs) {
+    const cutoff = performance.now() - winMs;
+    const seen = new Set();
+    for (let i = heardPcHistory.length - 1; i >= 0; i--) {
+      const h = heardPcHistory[i];
+      if (h.t < cutoff) break;
+      if (allowed.has(h.pc)) seen.add(h.pc);
+    }
+    return seen;
+  }
+
+  function autoCorrelate(buf, sampleRate) {
+    const SIZE = buf.length;
+    let rms = 0;
+    for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+    rms = Math.sqrt(rms / SIZE);
+    if (rms < 0.01) return -1;
+    let r1 = 0, r2 = SIZE - 1; const thres = 0.2;
+    for (let i = 0; i < SIZE / 2; i++) if (Math.abs(buf[i]) < thres) { r1 = i; break; }
+    for (let i = 1; i < SIZE / 2; i++) if (Math.abs(buf[SIZE - i]) < thres) { r2 = SIZE - i; break; }
+    const b = buf.slice(r1, r2), n = b.length, c = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n - i; j++) c[i] += b[j] * b[j + i];
+    let d = 0; while (d < n - 1 && c[d] > c[d + 1]) d++;
+    let maxval = -1, maxpos = -1;
+    for (let i = d; i < n; i++) if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+    let T0 = maxpos; if (T0 <= 0) return -1;
+    const x1 = c[T0 - 1], x2 = c[T0], x3 = c[T0 + 1];
+    const a = (x1 + x3 - 2 * x2) / 2, bb = (x3 - x1) / 2;
+    if (a) T0 = T0 - bb / (2 * a);
+    const freq = sampleRate / T0;
+    if (freq < 60 || freq > 1400) return -1;
+    return freq;
+  }
+
+  // Pause detection/loop when tab hidden
+  // Release the mic (and pause) whenever the page is backgrounded or hidden, so
+  // the OS microphone is freed for other apps/tabs. Mobile browsers hold the mic
+  // for the whole tab otherwise, which blocks re-opening or other apps from using
+  // it. On return the user re-taps the mic, which does a fresh getUserMedia.
+  function releaseForBackground() {
+    if (playing) pause();
+    if (micOn) stopMic();
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) releaseForBackground();
+  });
+  window.addEventListener("pagehide", releaseForBackground);
+
+  // ---- Init --------------------------------------------------------------
+  window.addEventListener("resize", () => { fitCanvas(); draw(pausedAt); });
+  fitCanvas();
+  // restore saved audio-sync offset
+  let savedSync = 0;
+  try { savedSync = parseInt(localStorage.getItem(SYNC_KEY), 10) || 0; } catch (e) {}
+  setSync(savedSync);
+  let savedMicSync = 0;
+  try { savedMicSync = parseInt(localStorage.getItem(MICSYNC_KEY), 10) || 0; } catch (e) {}
+  setMicSync(savedMicSync);
+  applySpeed(parseFloat(speedInput.value)); // initialize the speed readout
+  loadTrack("scale");
+})();
+</script>
+</body>
+</html>
